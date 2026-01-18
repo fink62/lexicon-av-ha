@@ -1,0 +1,61 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Lexicon AV Receiver Setup",
+        "description": "Enter the IP address of your Lexicon receiver. Make sure RS232 Control is enabled on the device.",
+        "data": {
+          "host": "IP Address",
+          "port": "Port"
+        }
+      },
+      "input_mapping": {
+        "title": "Input Mapping",
+        "description": "Enter YOUR custom names for the physical Lexicon inputs. Example: For the BD input you could enter 'DISC'. These names will appear in Home Assistant.",
+        "data": {
+          "BD": "Your name for BD input (e.g. 'DISC')",
+          "CD": "Your name for CD input (e.g. 'BLUESOUNDd')",
+          "STB": "Your name for STB input (e.g. 'PHONO')",
+          "AV": "Your name for AV input",
+          "SAT": "Your name for SAT input",
+          "PVR": "Your name for PVR input (e.g. 'BLUESOUNDa')",
+          "GAME": "Your name for GAME input",
+          "VCR": "Your name for VCR input",
+          "AUX": "Your name for AUX input",
+          "RADIO": "Your name for RADIO input",
+          "NET": "Your name for NET input",
+          "USB": "Your name for USB input",
+          "DISPLAY": "Your name for DISPLAY input (e.g. 'TV_ARC')"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the receiver. Please check the IP address and ensure RS232 Control is enabled."
+    },
+    "abort": {
+      "already_configured": "This device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Update Input Mapping",
+        "description": "Update your custom source names for physical Lexicon inputs.",
+        "data": {
+          "BD": "BluRay/DVD Input Name",
+          "CD": "CD Player Input Name",
+          "STB": "Set Top Box Input Name",
+          "AV": "AV Input Name",
+          "SAT": "Satellite Input Name",
+          "PVR": "PVR Input Name",
+          "GAME": "Game Console Input Name",
+          "VCR": "VCR Input Name",
+          "AUX": "Auxiliary Input Name",
+          "RADIO": "Tuner/Radio Input Name",
+          "NET": "Network Input Name",
+          "USB": "USB Input Name"
+        }
+      }
+    }
+  }
+}

@@ -7,24 +7,26 @@
 ```
 https://github.com/new
 Name: lexicon-av-ha
+Description: Home Assistant integration for Lexicon AV Receivers
 Public ✓
 ```
 
 ### Step 2: Upload Files
 
-1. Download and extract `lexicon_av_integration_v1.1.0.zip`
+1. Download and extract `lexicon_av_integration_v1.1.2.zip`
 2. Go to your GitHub repo → "uploading an existing file"
 3. Drag all files and folders
-4. Commit message: "Initial release v1.1.0"
+4. Commit message: "Initial release v1.1.2"
 5. Commit!
 
 ### Step 3: Create Release
 
 ```
 Releases → Create new release
-Tag: v1.1.0
-Title: v1.1.0 - Initial Release
+Tag: v1.1.2
+Title: v1.1.2 - Stable Release
 Description: See CHANGELOG.md
+Attach: lexicon_av_integration_v1.1.2.zip
 Publish!
 ```
 
@@ -57,14 +59,23 @@ DISPLAY → TV_ARC
 
 ## Enable RS232 Control on Lexicon
 
+**Critical:** RS232 control must be enabled or integration won't work!
+
 ### Option A: Front Panel
 1. Press and hold **DIRECT** button for 4 seconds
 2. Display shows: "RS232 CONTROL ON"
 
 ### Option B: OSD Menu
-1. Press **A + U** on remote (Setup Menu)
-2. Navigate to "General Setup"
-3. Set "Control" to "On"
+1. Press **MENU**
+2. Navigate to "General Setup"  
+3. Set "Control" to "IP" (not RS232)
+4. Confirm
+
+### Option C: Standby Mode (Recommended)
+1. Menu → General Setup → Standby Mode
+2. Set to **"IP & HDMI ON"**
+   - Enables control while in standby
+   - Higher power consumption but worth it for automation
 
 ---
 
@@ -74,6 +85,7 @@ DISPLAY → TV_ARC
 ```bash
 ping 192.168.20.178
 # Lexicon must be powered on!
+# Check RS232 Control is enabled
 ```
 
 ### Debug Logging
@@ -84,11 +96,28 @@ logger:
     custom_components.lexicon_av: debug
 ```
 
+View logs:
+- Settings → System → Logs
+- Search for `lexicon_av`
+
 ### Integration Not Loading
 1. Check logs: Settings → System → Logs
 2. Search for `lexicon_av`
 3. Verify RS232 Control is enabled
 4. Verify IP address is correct
+5. Verify port 50000 is accessible
+
+### Common Issues
+
+**Power doesn't work:**
+- Check RS232 Control is ON
+- Check Standby Mode is "IP & HDMI ON"
+- Lexicon uses power TOGGLE, not discrete ON/OFF
+
+**Inputs don't switch:**
+- Verify input mappings in Configure
+- Check custom names match exactly
+- Try physical input names (BD, CD, etc.)
 
 ---
 
@@ -122,7 +151,28 @@ service: media_player.volume_up
 service: media_player.volume_down
 service: media_player.volume_mute
 data:
-  mute: true
+  is_volume_muted: true
+```
+
+### Automations
+
+Create via GUI or YAML:
+
+```yaml
+automation:
+  - alias: "Movie Night"
+    trigger:
+      - platform: state
+        entity_id: input_boolean.movie_mode
+        to: "on"
+    action:
+      - service: media_player.turn_on
+        target:
+          entity_id: media_player.lexicon_av
+      - delay: "00:00:02"
+      - service: media_player.select_source
+        data:
+          source: "DISC"
 ```
 
 ---
@@ -130,7 +180,7 @@ data:
 ## Updating
 
 ### Via HACS
-1. HACS automatically detects new releases
+1. HACS automatically detects new releases (10-30 min delay)
 2. HACS → Integrations → Lexicon AV Receiver → Update
 3. Restart Home Assistant
 
@@ -138,6 +188,8 @@ data:
 1. Download new version ZIP
 2. Replace `/config/custom_components/lexicon_av/`
 3. Restart Home Assistant
+
+Configuration is preserved during updates.
 
 ---
 
