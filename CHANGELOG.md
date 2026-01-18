@@ -2,6 +2,57 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.1.3] - 2025-01-18
+
+### Changed
+- **All documentation now in English only**
+  - Removed German translation (de.json)
+  - All README, CHANGELOG, and docs in English
+  - English translation (en.json) only
+
+### Note
+No functional changes - documentation update only.
+
+---
+
+## [1.1.2] - 2025-01-18
+
+### Fixed
+- **CRITICAL**: Connection stability - no more manual integration reload needed!
+  - Automatic reconnection on connection loss
+  - Immediate retry on communication errors
+  - Initial connection established at startup
+  - Proper cleanup on entity removal
+  
+### Improved
+- Better error logging with detailed messages
+- Connection state tracking
+- Graceful handling of BrokenPipeError
+- Auto-reconnect doesn't spam logs
+
+### Technical
+- Added `async_added_to_hass()` for initial connection
+- Added `async_will_remove_from_hass()` for cleanup
+- Improved `_send_command()` with retry logic
+- Better exception handling (OSError, ConnectionError, BrokenPipeError)
+
+---
+
+## [1.1.1] - 2025-01-18
+
+### Fixed
+- **CRITICAL**: Power ON/OFF now works correctly
+  - Changed from discrete power commands to POWER TOGGLE (RC5: 0x0C)
+  - Lexicon receivers use power toggle, not separate ON/OFF commands
+  - Both `turn_on` and `turn_off` now send toggle command
+  
+### Technical
+- Added RC5_POWER_TOGGLE = 0x0C
+- Kept RC5_POWER_ON/OFF for reference but marked as potentially non-functional
+- Updated protocol to use reliable toggle command
+
+---
+
 ## [1.1.0] - 2025-01-18
 
 ### Added
@@ -12,14 +63,11 @@ All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
 ### Changed
 - Moved TV_ARC mapping from AV to DISPLAY input (correct Lexicon behavior)
-- Updated translations to reflect DISPLAY input in examples
+- Updated translations to reflect DISPLAY input
 
-### Migration from v1.0.x
-If you previously mapped TV ARC to AV input:
-1. Go to Settings → Devices & Services → Lexicon AV Receiver → Configure
-2. Clear the AV field
-3. Enter your custom name in the DISPLAY field (e.g., "TV_ARC")
-4. Submit
+### Documentation
+- Clarified input mapping examples in config flow
+- Added proper input documentation
 
 ### Recommended Configuration
 ```
@@ -36,13 +84,13 @@ DISPLAY → TV_ARC
 
 ### Fixed
 - **CRITICAL**: Options Flow (Configure button) now works correctly
-- Fixed "500 Internal Server Error" when clicking Configure
+- Fixed "500 Internal Server Error" when editing configuration
 - Options Flow now properly updates config entry data
 - Automatic integration reload after configuration changes
 
 ### Technical
 - Config entry data is now correctly updated instead of options
-- Added automatic reload mechanism after config changes
+- Added automatic reload after config changes
 
 ---
 
@@ -50,14 +98,13 @@ DISPLAY → TV_ARC
 
 ### Fixed
 - **CRITICAL**: Input source selection now works correctly  
-- **CRITICAL**: Custom input names now appear in UI (e.g., "DISC" instead of "BD")
+- **CRITICAL**: Custom input names now appear in UI (e.g. "DISC" instead of "BD")
 - Fixed reverse mapping logic for input selection
 - Improved error logging for troubleshooting
 
 ### Technical
 - Built correct reverse mapping: custom_name → physical_input
 - Media player now properly translates user names to Lexicon inputs
-- Added debug logging for input selection
 
 ---
 
@@ -65,7 +112,7 @@ DISPLAY → TV_ARC
 
 ### Added
 - Initial release
-- Power control (On/Off) via RS232/IP protocol
+- Power control (On/Off) via RS232/IP
 - Input source selection with custom naming
 - Volume control (Up/Down)
 - Mute control (On/Off/Toggle)
@@ -73,7 +120,7 @@ DISPLAY → TV_ARC
 - Config Flow for easy setup via UI
 - Support for all Lexicon physical inputs:
   - BD, CD, STB, AV, SAT, PVR, GAME, VCR, AUX, RADIO, NET, USB
-- German and English translations
+- English translations
 - HACS compatible
 
 ### Supported Devices
@@ -86,5 +133,4 @@ DISPLAY → TV_ARC
 - Custom input name mapping
 - Automatic reconnection on network issues
 - Media player state management
-- Service calls for all media player functions
-- Config flow with input mapping UI
+- Service calls for all functions

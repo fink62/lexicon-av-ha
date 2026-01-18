@@ -7,13 +7,14 @@ Home Assistant integration for Lexicon AV Receivers (RV-9, RV-6, MC-10) via RS23
 
 ## Features
 
-- ✅ Power control (On/Off)
-- ✅ Input source selection
+- ✅ Power control (On/Off via toggle)
+- ✅ Input source selection (13 inputs including DISPLAY)
 - ✅ Volume control (Up/Down)
-- ✅ Mute control
-- ✅ Media Player entity with full UI support
-- ✅ Service calls for all functions
-- ✅ Automatic reconnection on network issues
+- ✅ Mute control (On/Off/Toggle)
+- ✅ Custom input naming
+- ✅ Config Flow UI (no YAML required)
+- ✅ Automatic reconnection on connection loss
+- ✅ HACS compatible
 
 ## Supported Devices
 
@@ -21,64 +22,62 @@ Home Assistant integration for Lexicon AV Receivers (RV-9, RV-6, MC-10) via RS23
 - Lexicon RV-6
 - Lexicon MC-10
 
-## Requirements
-
-- Home Assistant 2023.1 or newer
-- Lexicon receiver connected to your network
-- RS232 Control enabled on the receiver
+All models with RS232/IP control (port 50000).
 
 ## Installation
 
-### HACS (Recommended)
+### Via HACS (Recommended)
 
-1. Add this repository as a custom repository in HACS:
-   - Open HACS
-   - Go to "Integrations"
-   - Click the three dots in the top right corner
-   - Select "Custom repositories"
-   - Add URL: `https://github.com/USERNAME/lexicon-av-ha`
+1. **Add custom repository:**
+   - HACS → Integrations → ⋮ → Custom repositories
+   - URL: `https://github.com/YOUR_USERNAME/lexicon-av-ha`
    - Category: Integration
-   
-2. Install "Lexicon AV Receiver" from HACS
 
-3. Restart Home Assistant
+2. **Install:**
+   - Search for "Lexicon AV Receiver"
+   - Download
+   - Restart Home Assistant
 
-4. Add integration via UI: Settings → Devices & Services → Add Integration → "Lexicon AV Receiver"
+3. **Add Integration:**
+   - Settings → Devices & Services → Add Integration
+   - Search for "Lexicon AV Receiver"
+   - Enter IP address and configure input mappings
 
 ### Manual Installation
 
-1. Copy the `custom_components/lexicon_av` directory to your Home Assistant `config/custom_components/` directory
-
-2. Restart Home Assistant
-
-3. Add integration via UI: Settings → Devices & Services → Add Integration → "Lexicon AV Receiver"
+1. Download latest release ZIP
+2. Extract to `/config/custom_components/lexicon_av/`
+3. Restart Home Assistant
+4. Add Integration via UI
 
 ## Configuration
 
 ### Enable RS232 Control on Lexicon
 
-**Option A: Via Front Panel**
-1. Press and hold the DIRECT button for 4 seconds
+**Important:** RS232 control must be enabled on your Lexicon receiver!
+
+**Option A: Front Panel**
+1. Press and hold **DIRECT** button for 4 seconds
 2. Display shows: "RS232 CONTROL ON"
 
-**Option B: Via OSD Menu**
-1. Press A + U on remote (opens Setup Menu)
+**Option B: OSD Menu**
+1. Press **MENU**
 2. Navigate to "General Setup"
-3. Set "Control" to "On"
+3. Set "Control" to "IP" (not RS232)
+4. Confirm
 
-### Configure Integration
+**Option C: Standby Mode (Recommended)**
+1. Menu → General Setup → Standby Mode
+2. Set to "IP & HDMI ON" (enables control while in standby)
 
-After installation, add the integration:
+### Setup Integration
 
-1. Go to Settings → Devices & Services
-2. Click "+ Add Integration"
-3. Search for "Lexicon AV Receiver"
-4. Enter your receiver's IP address (e.g., `192.168.20.178`)
-5. Configure your input mappings
+1. **IP Address:** Your Lexicon receiver IP (e.g., `192.168.20.178`)
+2. **Port:** `50000` (default)
 
-## Input Mapping
+### Input Mapping
 
-The Lexicon uses physical inputs (BD, CD, STB, etc.) which you can map to your actual devices:
+Map physical Lexicon inputs to your actual devices:
 
 | Your Device | Lexicon Input | Configuration Example |
 |-------------|---------------|----------------------|
@@ -90,217 +89,210 @@ The Lexicon uses physical inputs (BD, CD, STB, etc.) which you can map to your a
 
 **Important:** TV Audio Return Channel uses the `DISPLAY` input, not `AV`.
 
+### Available Inputs
+
+All 13 Lexicon physical inputs are supported:
+- **BD** - BluRay/DVD
+- **CD** - CD Player
+- **STB** - Set Top Box
+- **AV** - AV Input
+- **SAT** - Satellite
+- **PVR** - Personal Video Recorder
+- **GAME** - Game Console
+- **VCR** - Video Cassette Recorder
+- **AUX** - Auxiliary
+- **RADIO** - Tuner/Radio
+- **NET** - Network
+- **USB** - USB
+- **DISPLAY** - TV Audio Return Channel (ARC)
+
 ## Usage
 
-### Media Player Entity
+### Entity
 
-The integration creates a media player entity: `media_player.lexicon_av`
-
-This entity supports:
-- Turn on/off
-- Volume up/down
-- Mute/unmute
-- Source selection
-- Full Home Assistant media player UI
-
-### Services
-
-All standard media player services are available:
-
-```yaml
-# Turn on
-service: media_player.turn_on
-target:
-  entity_id: media_player.lexicon_av
-
-# Select source
-service: media_player.select_source
-target:
-  entity_id: media_player.lexicon_av
-data:
-  source: "DISC"
-
-# Volume control
-service: media_player.volume_up
-target:
-  entity_id: media_player.lexicon_av
+```
+media_player.lexicon_av
 ```
 
-### Example Automation
-
-```yaml
-automation:
-  - alias: "Evening Movie Mode"
-    trigger:
-      - platform: sun
-        event: sunset
-    action:
-      - service: media_player.turn_on
-        target:
-          entity_id: media_player.lexicon_av
-      - service: media_player.select_source
-        target:
-          entity_id: media_player.lexicon_av
-        data:
-          source: "DISC"
-      - service: media_player.volume_set
-        target:
-          entity_id: media_player.lexicon_av
-        data:
-          volume_level: 0.5
-```
-
-### Example Dashboard Card
+### Dashboard Card
 
 ```yaml
 type: media-control
 entity: media_player.lexicon_av
 ```
 
-Or custom buttons:
+### Services
 
 ```yaml
-type: entities
-title: Lexicon AV Receiver
-entities:
-  - entity: media_player.lexicon_av
-  - type: buttons
-    entities:
-      - entity: script.watch_apple_tv
-        name: Apple TV
-        icon: mdi:apple
-      - entity: script.listen_music
-        name: Music
-        icon: mdi:music
-      - entity: script.play_vinyl
-        name: Vinyl
-        icon: mdi:album
+# Power
+service: media_player.turn_on
+target:
+  entity_id: media_player.lexicon_av
+
+service: media_player.turn_off
+target:
+  entity_id: media_player.lexicon_av
+
+# Source Selection
+service: media_player.select_source
+target:
+  entity_id: media_player.lexicon_av
+data:
+  source: "DISC"
+
+# Volume
+service: media_player.volume_up
+target:
+  entity_id: media_player.lexicon_av
+
+service: media_player.volume_down
+target:
+  entity_id: media_player.lexicon_av
+
+# Mute
+service: media_player.volume_mute
+target:
+  entity_id: media_player.lexicon_av
+data:
+  is_volume_muted: true
+```
+
+### Automations
+
+Create automations via GUI:
+1. Settings → Automations & Scenes
+2. Add Action → Call service → `media_player.select_source`
+3. Select entity and source from dropdowns
+
+Example automation:
+
+```yaml
+automation:
+  - alias: "Movie Night"
+    trigger:
+      - platform: state
+        entity_id: input_boolean.movie_mode
+        to: "on"
+    action:
+      - service: media_player.turn_on
+        target:
+          entity_id: media_player.lexicon_av
+      - delay: "00:00:02"
+      - service: media_player.select_source
+        target:
+          entity_id: media_player.lexicon_av
+        data:
+          source: "DISC"
 ```
 
 ## Troubleshooting
 
 ### Connection Issues
 
-**"Connection refused"**
-- Verify RS232 Control is enabled on the receiver
-- Check IP address: `ping 192.168.20.178`
-- Ensure port 50000 is not blocked by firewall
+**"Cannot connect to receiver"**
+```bash
+# Test network connection
+ping 192.168.20.178
 
-**"Timeout"**
-- Receiver must be powered on for IP control
-- Check network connectivity
-- Verify receiver is on the same network
+# Verify Lexicon is powered on (not standby)
+# Check RS232 Control is enabled
+```
 
-### Integration Not Loading
+### Debug Logging
 
-1. Check Home Assistant logs: Settings → System → Logs
-2. Search for `lexicon_av`
-3. Common issues:
-   - Python syntax errors
-   - Missing dependencies
-   - Incorrect file permissions
-
-### Debugging
-
-Enable debug logging in `configuration.yaml`:
+Add to `configuration.yaml`:
 
 ```yaml
 logger:
-  default: info
   logs:
     custom_components.lexicon_av: debug
 ```
 
-## Development
+Check logs:
+- Settings → System → Logs
+- Search for `lexicon_av`
 
-### Project Structure
+### Common Issues
 
-```
-custom_components/lexicon_av/
-├── __init__.py          # Integration setup
-├── manifest.json        # Integration metadata
-├── config_flow.py       # Configuration UI
-├── media_player.py      # Media player entity
-├── lexicon_protocol.py  # RS232 protocol implementation
-└── const.py            # Constants
-```
+**Power doesn't work:**
+- Verify RS232 Control is ON (Menu → General Setup → Control)
+- Check Standby Mode is "IP & HDMI ON" for control in standby
+- Lexicon uses power TOGGLE, not discrete ON/OFF
 
-### Testing
+**Input selection doesn't work:**
+- Verify input mappings in integration settings
+- Check that input names don't have typos
+- Use Configure button to edit mappings
 
-```bash
-# Run tests
-pytest tests/
+**Connection drops after inactivity:**
+- Integration automatically reconnects
+- Check your router doesn't drop idle TCP connections
+- Verify Lexicon network settings
 
-# Type checking
-mypy custom_components/lexicon_av/
+### Integration Reload
 
-# Linting
-pylint custom_components/lexicon_av/
-```
+If needed, reload the integration:
+- Settings → Devices & Services
+- Lexicon AV Receiver → ⋮ → Reload
 
-## Advanced Configuration
+## Technical Details
 
-### Custom Input Mappings
+### RS232 Protocol
 
-If you need to add additional inputs or change mappings, edit the configuration after setup via the integration settings.
+- Port: 50000 (TCP/IP)
+- Format: Binary RS232 protocol over IP
+- Command: `0x21 0x01 0x08 0x02 <RC5_SYS> <RC5_CMD> 0x0D`
+- RC5 System: 0x10
+- Response: `0x21 0x02 0x02 0x00 <data> 0x0D` (0x00 = success)
+- Timeout: 3 seconds
 
-### Volume Step Size
+### RC5 Commands
 
-By default, volume changes by 1 step. To change multiple steps at once, create a script:
+- Power Toggle: 0x0C
+- Volume Up: 0x10
+- Volume Down: 0x11
+- Mute Toggle: 0x0D
+- Input BD: 0x62
+- Input CD: 0x76
+- Input DISPLAY: 0x3A
+- ...and more
 
-```yaml
-script:
-  lexicon_volume_up_3:
-    sequence:
-      - repeat:
-          count: 3
-          sequence:
-            - service: media_player.volume_up
-              target:
-                entity_id: media_player.lexicon_av
-            - delay: 0.2
-```
+## Updating
 
-## Protocol Documentation
+### Via HACS
 
-This integration uses the Lexicon RS232/IP protocol documented in the official Lexicon manuals.
+HACS automatically detects new releases (may take 10-30 minutes).
 
-Key details:
-- **Port**: 50000 (TCP)
-- **Protocol**: RS232 over TCP/IP
-- **Command format**: RC5 IR simulation via command 0x08
-- **Baud rate** (RS232): 38400, 8N1
+1. HACS → Integrations → Lexicon AV Receiver → Update
+2. Restart Home Assistant
 
-## Contributing
+### Manual Update
 
-Contributions are welcome! Please:
+1. Download new version ZIP
+2. Replace `/config/custom_components/lexicon_av/`
+3. Restart Home Assistant
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+Configuration is preserved during updates.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/USERNAME/lexicon-av-ha/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/USERNAME/lexicon-av-ha/discussions)
+- **Issues:** [GitHub Issues](https://github.com/YOUR_USERNAME/lexicon-av-ha/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/YOUR_USERNAME/lexicon-av-ha/discussions)
+- **Documentation:** [Full Documentation](https://github.com/YOUR_USERNAME/lexicon-av-ha)
+
+## Roadmap
+
+**v1.2.0 (Planned):**
+- Status polling (every 30 seconds)
+- Sensor entities (current input, volume level, signal format, decode mode, sample rate)
+- Binary sensors (mute status, Room EQ, Stereo Direct)
+- Real power state (not toggle-based assumption)
+
+## Credits
+
+- Protocol documentation from Lexicon/Harman
+- Inspired by similar AV receiver integrations
 
 ## License
 
 MIT License - see LICENSE file for details
-
-## Credits
-
-- Protocol implementation based on Lexicon RS232 Protocol Documentation
-- Home Assistant integration framework
-
-## Changelog
-
-### Version 1.0.0 (2025-01-XX)
-- Initial release
-- Power control
-- Input source selection
-- Volume control
-- Mute control
-- Media player entity
-- Config flow UI
