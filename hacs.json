@@ -1,0 +1,5 @@
+{
+  "name": "Lexicon AV Receiver",
+  "render_readme": true,
+  "domains": ["media_player"]
+}
