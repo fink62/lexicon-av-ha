@@ -15,7 +15,7 @@ DEFAULT_TIMEOUT = 3
 # RC5 System Code
 RC5_SYSTEM = 0x10
 
-# RC5 remote control codes: select input (PDF page 29)
+# Available Lexicon physical inputs with RC5 codes
 LEXICON_INPUTS = {
     "BD": 0x62,       # BluRay/DVD
     "CD": 0x76,       # CD Player
@@ -32,7 +32,7 @@ LEXICON_INPUTS = {
     "DISPLAY": 0x3A,  # TV Audio Return Channel (ARC)
 }
 
-# RC5 remote control codes: Commands
+# RC5 Commands
 RC5_POWER_TOGGLE = 0x0C  # Main power toggle
 RC5_POWER_ON = 0x7B      # Discrete power on (may not work on all units)
 RC5_POWER_OFF = 0x7C     # Discrete power off (may not work on all units)
@@ -42,7 +42,7 @@ RC5_MUTE_TOGGLE = 0x0D
 RC5_MUTE_ON = 0x1A
 RC5_MUTE_OFF = 0x78
 
-# RC remote control codes: Protocol codes
+# Protocol
 PROTOCOL_START = 0x21
 PROTOCOL_END = 0x0D
 PROTOCOL_ZONE1 = 0x01
@@ -50,7 +50,7 @@ PROTOCOL_CMD_SIMULATE_RC5 = 0x08
 PROTOCOL_DATA_LENGTH = 0x02
 PROTOCOL_ANSWER_OK = 0x00
 
-# RC remote control codes: Status Query Commands
+# Status Query Commands
 PROTOCOL_CMD_POWER = 0x00          # Request power state
 PROTOCOL_CMD_VOLUME = 0x0D         # Set/Request volume (0x00-0x63 = 0-99)
 PROTOCOL_CMD_MUTE = 0x0E           # Request mute status
@@ -60,8 +60,9 @@ PROTOCOL_CMD_DECODE_MCH = 0x11     # Request decode mode for multi-channel
 PROTOCOL_CMD_CURRENT_SOURCE = 0x1D # Request current source
 PROTOCOL_CMD_AUDIO_FORMAT = 0x43   # Request incoming audio format
 PROTOCOL_CMD_SAMPLE_RATE = 0x44    # Request incoming audio sample rate
+PROTOCOL_CMD_HEARTBEAT = 0x25       # Heartbeat/connection check    # Request incoming audio sample rate
 
-# RC remote control codes: Request Data Byte
+# Request Data Byte
 PROTOCOL_REQUEST = 0xF0
 
 # Polling
@@ -79,8 +80,8 @@ SOURCE_CODES = {
     0x06: "VCR",
     0x08: "AUX",
     0x09: "DISPLAY",
-    0x0B: "TUNER_FM",
-    0x0C: "TUNER_DAB",
+    0x0B: "RADIO",      # FM
+    0x0C: "RADIO_DAB",  # DAB
     0x0E: "NET",
     0x0F: "USB",
     0x10: "STB",

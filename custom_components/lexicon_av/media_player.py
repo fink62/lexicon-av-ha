@@ -79,13 +79,20 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                     self._physical_to_name[physical] = custom_name
         
         # Build source list from custom names, or physical names if no mapping
+        # Format: "Custom Name (PHYSICAL)" or just "PHYSICAL"
         if self._name_to_physical:
-            self._source_list = list(self._name_to_physical.keys())
+            # Show custom names with physical in brackets
+            self._source_list = [f"{custom} ({physical})" for custom, physical in self._name_to_physical.items()]
+            # Also add any unmapped physical inputs
+            for physical in LEXICON_INPUTS.keys():
+                if physical not in self._physical_to_name:
+                    self._source_list.append(physical)
         else:
+            # No mappings - show only physical names
             self._source_list = list(LEXICON_INPUTS.keys())
         
         self._current_source = None
-        self._state = MediaPlayerState.OFF
+        self._state = MediaPlayerState.UNKNOWN  # Query actual state on startup
         self._is_volume_muted = False
         self._volume_level = None  # 0.0 - 1.0
         self._cancel_polling = None
@@ -188,110 +195,106 @@ class LexiconMediaPlayer(MediaPlayerEntity):
     async def _async_update_status(self) -> None:
         """Query receiver status and update entity state."""
         try:
-            # Query ALL status first, then determine overall state
+            _LOGGER.debug("=== Status update poll #%d ===", self._poll_count)
             
-            # Query volume
+            # STEP 1: Query power state FIRST
+            power_state = None
+            if self._power_transition_until and datetime.now() < self._power_transition_until:
+                # In transition - use optimistic state
+                power_state = (self._state == MediaPlayerState.ON)
+                _LOGGER.debug("Power transition active, using optimistic state: %s", power_state)
+            else:
+                # Clear expired lock
+                if self._power_transition_until:
+                    _LOGGER.info("Power transition lock expired")
+                    self._power_transition_until = None
+                
+                # Query actual power
+                power_state = await self._protocol.get_power_state()
+                _LOGGER.debug("Power query result: %s", power_state)
+            
+            # STEP 2: Query all status (always, regardless of power)
             volume = await self._protocol.get_volume()
             if volume is not None:
-                # Convert 0-99 to 0.0-1.0 and round to 2 decimals
                 self._volume_level = round(volume / 99.0, 2)
-                _LOGGER.debug("Volume query: %d (%.2f)", volume, self._volume_level)
-            else:
-                _LOGGER.debug("Volume query returned None")
+                _LOGGER.debug("Volume: %d -> %.2f", volume, self._volume_level)
             
-            # Query mute state
             mute = await self._protocol.get_mute_state()
             if mute is not None:
                 self._is_volume_muted = mute
-                _LOGGER.debug("Mute query: %s", mute)
-            else:
-                _LOGGER.debug("Mute query returned None")
+                _LOGGER.debug("Mute: %s", mute)
             
-            # Query current source
             source = await self._protocol.get_current_source()
             if source is not None:
-                _LOGGER.debug("Source query returned: %s", source)
-                # Map physical source to custom name if mapping exists
+                # Map to custom name if exists, show physical in brackets
                 if source in self._physical_to_name:
-                    self._current_source = self._physical_to_name[source]
-                    _LOGGER.debug("Mapped %s -> %s", source, self._current_source)
+                    custom_name = self._physical_to_name[source]
+                    self._current_source = f"{custom_name} ({source})"
+                    _LOGGER.debug("Source: %s -> %s (%s)", source, custom_name, source)
                 else:
                     self._current_source = source
-                    _LOGGER.debug("No mapping for %s, using as-is", source)
-            else:
-                _LOGGER.debug("Source query returned None")
+                    _LOGGER.debug("Source: %s (no mapping)", source)
             
-            # Query audio status (only when device is on)
+            # STEP 3: Determine power state with fallback
+            if power_state is not None:
+                # Trust power query
+                if power_state:
+                    self._state = MediaPlayerState.ON
+                else:
+                    self._state = MediaPlayerState.OFF
+                    # Clear audio when OFF
+                    self._audio_format = None
+                    self._decode_mode = None
+                    self._sample_rate = None
+                    self._direct_mode = None
+            elif volume is not None or source is not None:
+                # Power query failed but got data -> assume ON
+                self._state = MediaPlayerState.ON
+                _LOGGER.info("Power query failed, but got volume/source -> assuming ON")
+            else:
+                # All failed -> OFF
+                self._state = MediaPlayerState.OFF
+                _LOGGER.warning("All queries failed -> assuming OFF")
+            
+            # STEP 4: Query audio status ONLY if ON
             if self._state == MediaPlayerState.ON:
-                # Audio format
                 audio_format = await self._protocol.get_audio_format()
                 if audio_format:
                     self._audio_format = audio_format
-                    _LOGGER.debug("Audio format: %s", audio_format)
                 
-                # Decode mode
                 decode_mode = await self._protocol.get_decode_mode()
                 if decode_mode:
                     self._decode_mode = decode_mode
-                    _LOGGER.debug("Decode mode: %s", decode_mode)
                 
-                # Sample rate
                 sample_rate = await self._protocol.get_sample_rate()
                 if sample_rate:
                     self._sample_rate = sample_rate
-                    _LOGGER.debug("Sample rate: %s", sample_rate)
                 
-                # Direct mode
                 direct_mode = await self._protocol.get_direct_mode()
                 if direct_mode is not None:
                     self._direct_mode = direct_mode
-                    _LOGGER.debug("Direct mode: %s", direct_mode)
             
-            # Query power state LAST (and determine overall state)
-            # BUT: Skip if we're in power transition (to avoid overwriting optimistic state)
-            if self._power_transition_until and datetime.now() < self._power_transition_until:
-                _LOGGER.debug("Power transition in progress, skipping power state query")
-            else:
-                # Clear transition lock if expired
-                if self._power_transition_until:
-                    _LOGGER.info("Power transition lock expired, querying actual state")
-                    self._power_transition_until = None
-                
-                power_state = await self._protocol.get_power_state()
-                if power_state is not None:
-                    if power_state:
-                        self._state = MediaPlayerState.ON
-                        _LOGGER.debug("Power state: ON")
-                    else:
-                        self._state = MediaPlayerState.OFF
-                        _LOGGER.debug("Power state: OFF")
-                else:
-                    # If we can query volume/source, assume device is on
-                    if volume is not None or source is not None:
-                        self._state = MediaPlayerState.ON
-                        _LOGGER.debug("Power query failed but got volume/source, assuming ON")
-                    else:
-                        _LOGGER.debug("All queries failed, device might be disconnected")
-            
-            # Update ready status based on successful queries
-            # Ready = device is ON and responding to queries
+            # STEP 5: Set ready status
             if self._state == MediaPlayerState.ON and (volume is not None or source is not None):
                 if not self._ready:
-                    _LOGGER.info("Receiver is now ready")
+                    _LOGGER.info("✅ Receiver is READY")
                 self._ready = True
             else:
+                if self._ready:
+                    _LOGGER.info("❌ Receiver is NOT READY")
                 self._ready = False
             
             _LOGGER.debug(
-                "Status update complete: power=%s, volume=%s, mute=%s, source=%s, ready=%s",
-                self._state, self._volume_level, self._is_volume_muted, self._current_source, self._ready
+                "Poll complete: state=%s ready=%s vol=%.2f mute=%s src=%s",
+                self._state, self._ready, 
+                self._volume_level if self._volume_level else 0.0,
+                self._is_volume_muted, self._current_source
             )
             
-            # Update HA state
             self.async_write_ha_state()
             
         except Exception as err:
-            _LOGGER.error("Error during status update: %s", err)
+            _LOGGER.error("Status update error: %s", err, exc_info=True)
 
     @property
     def supported_features(self) -> MediaPlayerEntityFeature:
@@ -439,14 +442,19 @@ class LexiconMediaPlayer(MediaPlayerEntity):
 
     async def async_select_source(self, source: str) -> None:
         """Select input source."""
-        # Find the physical Lexicon input from the custom name
+        # Parse source string - could be "Custom (PHYSICAL)" or just "PHYSICAL"
         physical_input = None
         
-        # Check if source is a custom name that maps to a physical input
-        if source in self._name_to_physical:
+        # Check if format is "Custom (PHYSICAL)"
+        if "(" in source and source.endswith(")"):
+            # Extract physical name from brackets
+            physical_input = source.split("(")[1].rstrip(")")
+            _LOGGER.debug("Parsed source: '%s' -> physical: '%s'", source, physical_input)
+        elif source in self._name_to_physical:
+            # Old format: just custom name
             physical_input = self._name_to_physical[source]
         elif source in LEXICON_INPUTS:
-            # Direct physical input name (when no custom mapping used)
+            # Direct physical input name
             physical_input = source
         else:
             _LOGGER.error("Unknown source: %s (available: %s)", source, self._source_list)
@@ -460,11 +468,12 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 # Wait a moment for receiver to process input change
                 await asyncio.sleep(1)
                 
-                # Query new source immediately
+                # Query new source immediately and update with correct format
                 new_source = await self._protocol.get_current_source()
                 if new_source:
                     if new_source in self._physical_to_name:
-                        self._current_source = self._physical_to_name[new_source]
+                        custom_name = self._physical_to_name[new_source]
+                        self._current_source = f"{custom_name} ({new_source})"
                     else:
                         self._current_source = new_source
                 else:

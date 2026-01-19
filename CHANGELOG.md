@@ -2,6 +2,118 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.5.1] - 2025-01-19
+
+### Changed - Improved Source Display
+- **Source display now shows physical name in brackets**
+  - With mapping: `"BLUESOUNDa (PVR)"` 
+  - Without mapping: `"PVR"`
+  - Makes it clear which physical input is active
+  - Easier to troubleshoot input mappings
+
+### Fixed
+- Source selection handles both formats: `"Custom (PHYSICAL)"` and `"PHYSICAL"`
+- Source list includes all inputs (mapped and unmapped)
+
+### Example Display
+
+**Before**:
+```
+source: "BLUESOUNDa"  # Which physical input is this?
+source_list: ["BLUESOUNDa", "TV ARC", "DISC"]
+```
+
+**After**:
+```
+source: "BLUESOUNDa (PVR)"  # Clear it's the PVR input!
+source_list: ["BLUESOUNDa (PVR)", "TV ARC (DISPLAY)", "DISC (BD)", "CD"]
+```
+
+---
+
+## [1.5.0] - 2025-01-19
+
+### Fixed - CRITICAL POLLING REWRITE
+- **State stuck at OFF** - Completely rewrote polling logic
+  - Issue: Audio status queried BEFORE power state determined
+  - Fix: Query power FIRST, then all other status, THEN determine state
+  - Result: State now correctly reflects receiver power
+
+- **Ready attribute always false** - Fixed ready detection
+  - Issue: Ready check happened before state was determined
+  - Fix: Set ready AFTER state determination
+  - Result: Ready correctly becomes true when receiver responds
+
+- **Volume resets on startup** - Preserve polled volume
+  - Issue: Volume initialized to None, looked like 0
+  - Fix: Volume only set when successfully polled
+  - Result: Volume stays at actual receiver level
+
+- **Assumes OFF on startup** - Query actual state
+  - Issue: Started with `MediaPlayerState.OFF`
+  - Fix: Start with `MediaPlayerState.UNKNOWN`, query on first poll
+  - Result: Works correctly when receiver already ON at HA startup
+
+### Added
+- **Heartbeat command (0x25)** - Connection health check
+  - Added `PROTOCOL_CMD_HEARTBEAT = 0x25` to const.py
+  - Can be used to verify connection is alive
+  - Helps detect stuck connections
+
+### Changed
+- **Complete polling logic rewrite**:
+  1. Query power state FIRST (or use optimistic during transition)
+  2. Query all status (volume, mute, source) - ALWAYS
+  3. Determine power state (use power query, fallback to volume/source)
+  4. Query audio status ONLY if ON
+  5. Set ready status based on successful queries
+
+- **Better debug logging**:
+  - `=== Status update poll #X ===` markers
+  - Shows each query result
+  - Clear state transitions
+  - "✅ Receiver is READY" / "❌ Receiver is NOT READY"
+
+### Technical Details
+
+**Old broken flow**:
+```
+1. Query volume/mute/source
+2. Check if state == ON  ← state still UNKNOWN!
+3. Skip audio queries
+4. Query power
+5. Set state
+6. Check ready  ← based on old state
+```
+
+**New correct flow**:
+```
+1. Query power → power_state
+2. Query volume/mute/source → always
+3. Determine state → based on power_state + fallback
+4. IF state == ON: Query audio
+5. Set ready → based on NEW state
+```
+
+### Migration Notes
+- No configuration changes required
+- Fully backward compatible
+- Just upgrade and restart
+
+### For BLUESOUNDa Source
+
+Add to `configuration.yaml`:
+```yaml
+lexicon_av:
+  host: YOUR_IP
+  input_mappings:
+    PVR: "BLUESOUNDa"  # Maps physical PVR input
+    DISPLAY: "TV ARC"
+    # ... your other mappings
+```
+
+---
+
 ## [1.4.4] - 2025-01-19
 
 ### Fixed
