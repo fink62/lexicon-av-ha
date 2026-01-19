@@ -1,0 +1,217 @@
+# ===== macOS =====
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# ===== Python =====
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# ===== IDEs & Editors =====
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# ===== Home Assistant Specific =====
+# Secrets (CRITICAL - never commit!)
+secrets.yaml
+secrets.yml
+*.secret
+
+# Home Assistant database
+home-assistant_v2.db
+home-assistant_v2.db-shm
+home-assistant_v2.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+home-assistant.log*
+
+# Recordings
+*.mp4
+*.mkv
+*.avi
+
+# TTS cache
+tts/
+
+# Known devices
+known_devices.yaml
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# ===== Project Specific =====
+# Test files and fixtures
+tests/__pycache__/
+tests/.pytest_cache/
+*.pyc
+
+# Temporary development files
+tmp/
+temp/
+*.tmp
+
+# Archives (keep release packages but ignore dev archives)
+*.tar.gz
+*.zip
+# Exception: Keep release packages in releases/ folder
+!releases/*.zip
+!releases/*.tar.gz
+
+# Documentation build files
+docs/_build/
+docs/.doctrees/
+
+# ===== CI/CD =====
+.github/workflows/.cache/
+
+# ===== Personal / Local =====
+# Personal notes and TODO
+TODO.md
+NOTES.md
+*.local
+
+# Development credentials (if any)
+.env
+.env.local
+.env.*.local
+
+# Personal test configurations
+test_config.yaml
+dev_config.yaml
+
+# ===== Windows (in case of cross-platform dev) =====
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ===== Linux =====
+# Backup files
+*~
+
+# ===== Integration Testing =====
+# Test Home Assistant instance
+.homeassistant/
+config/
+
+# Custom test fixtures
+fixtures/
+
+# ===== Keep These Files =====
+# Don't ignore these important files
+!.gitignore
+!.github/
+!README.md
+!LICENSE
+!CHANGELOG.md
+!hacs.json
+!custom_components/
+!info.md
