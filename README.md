@@ -30,7 +30,7 @@ All models with RS232/IP control (port 50000).
 
 1. **Add custom repository:**
    - HACS → Integrations → ⋮ → Custom repositories
-   - URL: `https://github.com/YOUR_USERNAME/lexicon-av-ha`
+   - URL: `https://github.com/fink62/lexicon-av-ha`
    - Category: Integration
 
 2. **Install:**
@@ -106,9 +106,9 @@ All 13 Lexicon physical inputs are supported:
 - **USB** - USB
 - **DISPLAY** - TV Audio Return Channel (ARC)
 
-## Usage
+## Usage samples
 
-### Entity
+### Entity (sample name)
 
 ```
 media_player.lexicon_av
@@ -161,8 +161,8 @@ data:
 
 Create automations via GUI:
 1. Settings → Automations & Scenes
-2. Add Action → Call service → `media_player.select_source`
-3. Select entity and source from dropdowns
+2. Add Action → Perform action → `media_player.select_source`
+3. Select entity and enter source string (your custom value)
 
 Example automation:
 
@@ -282,7 +282,7 @@ Configuration is preserved during updates.
 
 ## Roadmap
 
-**v1.2.0 (Planned):**
+**v1.4.0 (Planned):**
 - Status polling (every 30 seconds)
 - Sensor entities (current input, volume level, signal format, decode mode, sample rate)
 - Binary sensors (mute status, Room EQ, Stereo Direct)
