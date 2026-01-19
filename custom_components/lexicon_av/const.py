@@ -62,20 +62,22 @@ PROTOCOL_REQUEST = 0xF0
 # Polling
 DEFAULT_SCAN_INTERVAL = 30  # seconds
 
-# Source Code Mapping (reverse of LEXICON_INPUTS for status queries)
+# Source Code Mapping (Response codes from Command 0x1D - PDF page 9)
+# These are DIFFERENT from RC5 command codes!
 SOURCE_CODES = {
     0x00: "FOLLOW_ZONE1",
-    0x76: "CD",
-    0x62: "BD",
-    0x5E: "AV",
-    0x1B: "SAT",
-    0x60: "PVR",
-    0x77: "VCR",
-    0x63: "AUX",
-    0x3A: "DISPLAY",
-    0x5B: "RADIO",
-    0x5C: "NET",
-    0x5D: "USB",
-    0x64: "STB",
-    0x61: "GAME",
+    0x01: "CD",
+    0x02: "BD",
+    0x03: "AV",
+    0x04: "SAT",
+    0x05: "PVR",
+    0x06: "VCR",
+    0x08: "AUX",
+    0x09: "DISPLAY",
+    0x0B: "RADIO",      # FM
+    0x0C: "RADIO_DAB",  # DAB
+    0x0E: "NET",
+    0x0F: "USB",
+    0x10: "STB",
+    0x11: "GAME",
 }

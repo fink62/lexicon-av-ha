@@ -149,8 +149,8 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                     # Query volume
                     volume = await self._protocol.get_volume()
                     if volume is not None:
-                        # Convert 0-99 to 0.0-1.0
-                        self._volume_level = volume / 99.0
+                        # Convert 0-99 to 0.0-1.0 and round to 2 decimals
+                        self._volume_level = round(volume / 99.0, 2)
                     
                     # Query mute state
                     mute = await self._protocol.get_mute_state()
@@ -222,6 +222,17 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         """Boolean if volume is currently muted."""
         return self._is_volume_muted
 
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return entity specific state attributes."""
+        attrs = {}
+        
+        # Add integer volume (0-99) for easier use in automations
+        if self._volume_level is not None:
+            attrs["volume_int"] = int(self._volume_level * 99)
+        
+        return attrs
+
     async def async_turn_on(self) -> None:
         """Turn the media player on."""
         _LOGGER.info("Turning ON Lexicon (via power toggle)")
@@ -253,7 +264,7 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             await asyncio.sleep(0.3)
             volume = await self._protocol.get_volume()
             if volume is not None:
-                self._volume_level = volume / 99.0
+                self._volume_level = round(volume / 99.0, 2)
                 self.async_write_ha_state()
 
     async def async_volume_down(self) -> None:
@@ -263,7 +274,7 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             await asyncio.sleep(0.3)
             volume = await self._protocol.get_volume()
             if volume is not None:
-                self._volume_level = volume / 99.0
+                self._volume_level = round(volume / 99.0, 2)
                 self.async_write_ha_state()
 
     async def async_set_volume_level(self, volume: float) -> None:
@@ -273,7 +284,7 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         _LOGGER.debug("Setting volume to %d (%.2f)", lexicon_volume, volume)
         
         if await self._protocol.set_volume(lexicon_volume):
-            self._volume_level = volume
+            self._volume_level = round(volume, 2)
             self.async_write_ha_state()
             _LOGGER.info("Volume set to %d", lexicon_volume)
         else:

@@ -2,6 +2,23 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.2.1] - 2025-01-19
+
+### Fixed
+- **SOURCE_CODES mapping**: Fixed response codes to match Command 0x1D specification (PDF page 9)
+  - Response codes are DIFFERENT from RC5 command codes
+  - `0x09 = DISPLAY` (was showing as UNKNOWN_0x09)
+  - All source codes now correctly mapped
+- **Volume display**: Added `volume_int` attribute (0-99) for easier use
+  - `volume_level` remains as float (0.0-1.0) for HA media_player compatibility
+  - `volume_int` available in attributes for automations and templates
+
+### Technical
+- SOURCE_CODES now uses response codes from Command 0x1D (not RC5 codes)
+- Added `extra_state_attributes` property with `volume_int`
+
+---
+
 ## [1.2.0] - 2025-01-19
 
 ### Added
