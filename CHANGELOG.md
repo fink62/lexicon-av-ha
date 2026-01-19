@@ -2,6 +2,33 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.4.4] - 2025-01-19
+
+### Fixed
+- **CRITICAL: `ready` attribute was missing** - Duplicate property definition bug
+  - Issue: Two `extra_state_attributes` properties defined, second one overwrote first
+  - Fixed: Merged both definitions into one
+  - Result: All attributes now visible (ready, audio_format, decode_mode, sample_rate, direct_mode, volume_int)
+
+### Changed
+- Removed immediate status query after power ON
+  - Gives receiver more time to boot before first query
+  - Prevents premature "OFF" state reading
+
+### Added
+- Enhanced debug logging for power state queries
+  - Shows raw hex value from receiver
+  - Helps diagnose power state interpretation issues
+
+---
+
+## [1.4.3] - 2025-01-19
+
+### Changed
+- Debug version (not released)
+
+---
+
 ## [1.4.2] - 2025-01-19
 
 ### Added

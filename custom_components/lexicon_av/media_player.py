@@ -337,6 +337,11 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             "ready": self._ready  # Always include ready status
         }
         
+        # Add integer volume (0-99) for easier use in automations
+        if self._volume_level is not None:
+            attrs["volume_int"] = int(self._volume_level * 99)
+        
+        # Audio status
         if self._audio_format:
             attrs["audio_format"] = self._audio_format
         if self._decode_mode:
@@ -346,17 +351,6 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         if self._direct_mode is not None:
             attrs["direct_mode"] = self._direct_mode
             
-        return attrs
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        """Return entity specific state attributes."""
-        attrs = {}
-        
-        # Add integer volume (0-99) for easier use in automations
-        if self._volume_level is not None:
-            attrs["volume_int"] = int(self._volume_level * 99)
-        
         return attrs
 
     async def async_turn_on(self) -> None:
