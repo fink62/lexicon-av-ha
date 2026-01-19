@@ -54,7 +54,12 @@ PROTOCOL_ANSWER_OK = 0x00
 PROTOCOL_CMD_POWER = 0x00          # Request power state
 PROTOCOL_CMD_VOLUME = 0x0D         # Set/Request volume (0x00-0x63 = 0-99)
 PROTOCOL_CMD_MUTE = 0x0E           # Request mute status
+PROTOCOL_CMD_DIRECT_MODE = 0x0F    # Request direct mode status
+PROTOCOL_CMD_DECODE_2CH = 0x10     # Request decode mode for 2-channel
+PROTOCOL_CMD_DECODE_MCH = 0x11     # Request decode mode for multi-channel
 PROTOCOL_CMD_CURRENT_SOURCE = 0x1D # Request current source
+PROTOCOL_CMD_AUDIO_FORMAT = 0x43   # Request incoming audio format
+PROTOCOL_CMD_SAMPLE_RATE = 0x44    # Request incoming audio sample rate
 
 # Request Data Byte
 PROTOCOL_REQUEST = 0xF0
@@ -80,4 +85,66 @@ SOURCE_CODES = {
     0x0F: "USB",
     0x10: "STB",
     0x11: "GAME",
+}
+
+# Decode Mode Mapping - 2 Channel Material (Command 0x10 Response)
+DECODE_MODE_2CH = {
+    0x01: "Stereo",
+    0x04: "Dolby Surround",
+    0x07: "Neo:6 Cinema",
+    0x08: "Neo:6 Music",
+    0x09: "5/7 Ch Stereo",
+    0x0A: "DTS Neural:X",
+    0x0B: "Logic7 Immersion",
+    0x0C: "DTS Virtual:X",
+}
+
+# Decode Mode Mapping - Multi-Channel Material (Command 0x11 Response)
+DECODE_MODE_MCH = {
+    0x01: "Stereo Downmix",
+    0x02: "Multi-Channel",
+    0x03: "DTS Neural:X",
+    0x06: "Dolby Surround",
+    0x0B: "Logic7 Immersion",
+    0x0C: "DTS Virtual:X",
+}
+
+# Audio Format Mapping (Command 0x43 Response - Data1)
+AUDIO_FORMAT = {
+    0x00: "PCM",
+    0x01: "Analogue Direct",
+    0x02: "Dolby Digital",
+    0x03: "Dolby Digital EX",
+    0x04: "Dolby Surround",
+    0x05: "Dolby Digital Plus",
+    0x06: "Dolby TrueHD",
+    0x07: "DTS",
+    0x08: "DTS 96/24",
+    0x09: "DTS ES Matrix",
+    0x0A: "DTS ES Discrete",
+    0x0B: "DTS ES Matrix 96/24",
+    0x0C: "DTS ES Discrete 96/24",
+    0x0D: "DTS HD Master Audio",
+    0x0E: "DTS HD High Res",
+    0x0F: "DTS Low Bit Rate",
+    0x10: "DTS Core",
+    0x13: "PCM Zero",
+    0x14: "Unsupported",
+    0x15: "Undetected",
+    0x16: "Dolby Atmos",
+    0x17: "DTS:X",
+    0x18: "IMAX Enhanced",
+}
+
+# Sample Rate Mapping (Command 0x44 Response)
+SAMPLE_RATE = {
+    0x00: "32 kHz",
+    0x01: "44.1 kHz",
+    0x02: "48 kHz",
+    0x03: "88.2 kHz",
+    0x04: "96 kHz",
+    0x05: "176.4 kHz",
+    0x06: "192 kHz",
+    0x07: "Unknown",
+    0x08: "Undetected",
 }

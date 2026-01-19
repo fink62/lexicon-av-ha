@@ -2,6 +2,168 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.4.0] - 2025-01-19
+
+### Added - Audio Status Information
+- **Audio Format Attribute** - Shows current audio format
+  - Examples: "Dolby Atmos", "DTS:X", "PCM", "Dolby TrueHD"
+  - Available in media_player attributes as `audio_format`
+  
+- **Decode Mode Attribute** - Shows current processing mode
+  - Examples: "Stereo", "Dolby Surround", "DTS Neural:X"
+  - Available in media_player attributes as `decode_mode`
+  
+- **Sample Rate Attribute** - Shows current audio sample rate
+  - Examples: "48 kHz", "96 kHz", "192 kHz"
+  - Available in media_player attributes as `sample_rate`
+  
+- **Direct Mode Attribute** - Shows if direct mode is active
+  - Boolean: true/false
+  - Available in media_player attributes as `direct_mode`
+
+### Protocol Additions
+- Added query commands:
+  - `get_direct_mode()` - Command 0x0F
+  - `get_decode_mode()` - Commands 0x10 & 0x11
+  - `get_audio_format()` - Command 0x43
+  - `get_sample_rate()` - Command 0x44
+
+- Added response mappings:
+  - `DECODE_MODE_2CH` - 2-channel decode modes
+  - `DECODE_MODE_MCH` - Multi-channel decode modes
+  - `AUDIO_FORMAT` - All audio format codes
+  - `SAMPLE_RATE` - Sample rate codes
+
+### Usage
+Access these attributes in:
+- **Templates**: `{{ state_attr('media_player.lexicon_av', 'audio_format') }}`
+- **Automations**: Use attribute conditions
+- **Dashboards**: Display with attribute cards
+
+### Dashboard Example
+```yaml
+type: glance
+entities:
+  - entity: media_player.lexicon_av
+    name: Format
+    attribute: audio_format
+  - entity: media_player.lexicon_av
+    name: Mode
+    attribute: decode_mode
+  - entity: media_player.lexicon_av
+    name: Rate
+    attribute: sample_rate
+  - entity: media_player.lexicon_av
+    name: Direct
+    attribute: direct_mode
+```
+
+### Performance
+- Audio status only queried when device is ON
+- No impact when device is OFF
+- Adds ~4 queries per 30-second poll cycle when ON
+
+---
+
+## [1.3.1] - 2025-01-19
+
+### Added - Smart Power-On and Input Switching
+- **Power-On Verification** - `power_on()` now waits and verifies receiver is ready
+  - Waits 2 seconds for boot
+  - Verifies power state up to 5 times (5 seconds)
+  - Returns when ready or after max 7 seconds
+  - Logs: "Receiver powered on and verified ready"
+
+- **Wait Until Ready Helper** - New method for scripts
+  - `wait_until_ready(timeout=10)` checks volume query success
+  - Returns immediately when receiver responds
+  - Typical ready time: 3-4 seconds after power on
+
+- **Input Selection Verification** - Verifies input actually changed
+  - Waits 1 second for input to switch
+  - Queries actual current source
+  - Updates state with verified source
+
+### Improved
+- `async_turn_on()` now includes automatic status update after power on
+- `async_select_source()` verifies input change and updates immediately
+- No more need for 8-second delays in scripts!
+
+### Changed
+- Scripts can now rely on integration to handle power-on timing
+- Removed unnecessary 2-second sleep from `async_turn_on()` (moved to protocol)
+
+### Documentation
+- Added POWER_ON_BEST_PRACTICES.md with migration guide
+- Example scripts showing old vs new approach
+- Timing diagrams for power-on and input switching
+
+### Performance
+- **Power on**: 3-7 seconds (intelligent wait) vs 8 seconds (fixed)
+- **Input switch**: 1-2 seconds (verified) vs 8 seconds (fixed)
+- **Typical sequence**: 4-8 seconds vs 16 seconds (50% faster!)
+
+---
+
+## [1.3.0] - 2025-01-19
+
+### Added - Major Protocol Improvements
+- **Buffer-based Frame Parsing** - Proper protocol frame parsing with `readexactly()`
+  - Reads exact frame structure: header (5 bytes) + data + end byte
+  - Validates start/end bytes for frame integrity
+  - Prevents buffer overflow and partial frame issues
+  
+- **Robust Reconnect Handling** - Smart reconnection with exponential backoff
+  - Connection state management with asyncio.Lock
+  - Reconnect throttling (min 5 seconds between attempts)
+  - Max 5 reconnect attempts before giving up
+  - Tracks reconnect attempts and last attempt time
+  
+- **Adaptive Polling Intervals** - Smart polling based on device state
+  - **Startup**: 5 seconds (first 3 polls for quick initialization)
+  - **Device ON**: 30 seconds (frequent updates)
+  - **Device OFF**: 120 seconds (save resources)
+  - Auto-adjusts interval when state changes
+
+### Improved
+- Protocol frame reading now uses `readexactly()` instead of `read(1024)`
+- Connection cleanup properly handles broken pipes
+- Single retry attempt on communication errors
+- Connection lock prevents race conditions
+- Better error messages with attempt counting
+
+### Technical Details
+
+**Frame Parsing:**
+```python
+# Old: Read up to 1024 bytes (could be incomplete frame)
+response = await reader.read(1024)
+
+# New: Read exact frame structure
+header = await reader.readexactly(5)  # Start, Zone, Cmd, Answer, DataLen
+data_len = header[4]
+remaining = await reader.readexactly(data_len + 1)  # Data + End
+```
+
+**Reconnect Logic:**
+- `_ensure_connection()`: Check and reconnect before each operation
+- `_connection_lock`: Prevent concurrent connection attempts
+- `_last_reconnect_attempt`: Throttle reconnection attempts
+- `_reconnect_attempts`: Track failures (max 5)
+
+**Adaptive Polling:**
+- State changes trigger immediate poll interval adjustment
+- Startup optimization: fast polls for 3x, then normal
+- Resource-efficient: 2-minute interval when device is off
+
+### Performance Impact
+- **Less network traffic when OFF**: 120s vs 30s interval
+- **Faster startup**: 5s interval for first 3 polls
+- **More reliable**: Proper frame parsing prevents protocol errors
+- **Better error recovery**: Exponential backoff prevents connection storms
+
+---
+
 ## [1.2.2] - 2025-01-19
 
 ### Fixed

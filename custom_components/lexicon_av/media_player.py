@@ -23,6 +23,11 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     LEXICON_INPUTS,
 )
+
+# Polling intervals
+SCAN_INTERVAL_ON = 30      # 30 seconds when device is on
+SCAN_INTERVAL_OFF = 120    # 2 minutes when device is off
+SCAN_INTERVAL_STARTUP = 5  # 5 seconds for first few polls after startup
 from .lexicon_protocol import LexiconProtocol
 
 _LOGGER = logging.getLogger(__name__)
@@ -84,6 +89,13 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         self._is_volume_muted = False
         self._volume_level = None  # 0.0 - 1.0
         self._cancel_polling = None
+        self._poll_count = 0  # Track number of polls for startup optimization
+        
+        # Audio status attributes
+        self._audio_format = None
+        self._decode_mode = None
+        self._sample_rate = None
+        self._direct_mode = None
 
         # Set unique ID
         self._attr_unique_id = f"lexicon_av_{protocol._host}"
@@ -110,13 +122,35 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             self._state = MediaPlayerState.OFF
             _LOGGER.warning("Initial connection failed, will retry on first command")
         
-        # Start polling timer (every 30 seconds)
+        # Start adaptive polling
+        await self._schedule_next_poll()
+        _LOGGER.info("Adaptive status polling started")
+
+    async def _schedule_next_poll(self):
+        """Schedule next poll with adaptive interval based on device state."""
+        # Determine interval based on state
+        if self._poll_count < 3:
+            # First few polls: faster for quick startup
+            interval = SCAN_INTERVAL_STARTUP
+        elif self._state == MediaPlayerState.ON:
+            # Device is on: poll frequently
+            interval = SCAN_INTERVAL_ON
+        else:
+            # Device is off: poll less frequently to save resources
+            interval = SCAN_INTERVAL_OFF
+        
+        _LOGGER.debug("Scheduling next poll in %d seconds (state: %s)", interval, self._state)
+        
+        # Cancel existing timer if any
+        if self._cancel_polling:
+            self._cancel_polling()
+        
+        # Schedule new poll
         self._cancel_polling = async_track_time_interval(
             self.hass,
             self._async_polling_update,
-            timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            timedelta(seconds=interval),
         )
-        _LOGGER.info("Status polling started (interval: %ds)", DEFAULT_SCAN_INTERVAL)
 
     async def async_will_remove_from_hass(self) -> None:
         """Run when entity will be removed from hass."""
@@ -133,8 +167,19 @@ class LexiconMediaPlayer(MediaPlayerEntity):
 
     async def _async_polling_update(self, now=None) -> None:
         """Periodic status update (called by timer)."""
-        _LOGGER.debug("Polling update triggered")
+        self._poll_count += 1
+        _LOGGER.debug("Polling update #%d triggered", self._poll_count)
+        
+        # Store previous state to detect changes
+        previous_state = self._state
+        
+        # Update status
         await self._async_update_status()
+        
+        # If state changed, reschedule with new interval
+        if previous_state != self._state:
+            _LOGGER.info("State changed from %s to %s, adjusting poll interval", previous_state, self._state)
+            await self._schedule_next_poll()
 
     async def _async_update_status(self) -> None:
         """Query receiver status and update entity state."""
@@ -171,6 +216,32 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                     _LOGGER.debug("No mapping for %s, using as-is", source)
             else:
                 _LOGGER.debug("Source query returned None")
+            
+            # Query audio status (only when device is on)
+            if self._state == MediaPlayerState.ON:
+                # Audio format
+                audio_format = await self._protocol.get_audio_format()
+                if audio_format:
+                    self._audio_format = audio_format
+                    _LOGGER.debug("Audio format: %s", audio_format)
+                
+                # Decode mode
+                decode_mode = await self._protocol.get_decode_mode()
+                if decode_mode:
+                    self._decode_mode = decode_mode
+                    _LOGGER.debug("Decode mode: %s", decode_mode)
+                
+                # Sample rate
+                sample_rate = await self._protocol.get_sample_rate()
+                if sample_rate:
+                    self._sample_rate = sample_rate
+                    _LOGGER.debug("Sample rate: %s", sample_rate)
+                
+                # Direct mode
+                direct_mode = await self._protocol.get_direct_mode()
+                if direct_mode is not None:
+                    self._direct_mode = direct_mode
+                    _LOGGER.debug("Direct mode: %s", direct_mode)
             
             # Query power state LAST (and determine overall state)
             power_state = await self._protocol.get_power_state()
@@ -239,6 +310,22 @@ class LexiconMediaPlayer(MediaPlayerEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
+        """Return additional state attributes."""
+        attrs = {}
+        
+        if self._audio_format:
+            attrs["audio_format"] = self._audio_format
+        if self._decode_mode:
+            attrs["decode_mode"] = self._decode_mode
+        if self._sample_rate:
+            attrs["sample_rate"] = self._sample_rate
+        if self._direct_mode is not None:
+            attrs["direct_mode"] = self._direct_mode
+            
+        return attrs
+
+    @property
+    def extra_state_attributes(self) -> dict:
         """Return entity specific state attributes."""
         attrs = {}
         
@@ -253,8 +340,7 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         _LOGGER.info("Turning ON Lexicon (via power toggle)")
         if await self._protocol.power_on():
             self._state = MediaPlayerState.ON
-            # Wait a bit for receiver to power on, then query status
-            await asyncio.sleep(2)
+            # Immediate status query after power on
             await self._async_update_status()
             _LOGGER.info("Lexicon turned ON successfully")
         else:
@@ -335,7 +421,20 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             input_code = LEXICON_INPUTS[physical_input]
             _LOGGER.debug("Selecting source %s (physical: %s, code: 0x%02X)", source, physical_input, input_code)
             if await self._protocol.select_input(input_code):
-                self._current_source = source
+                # Wait a moment for receiver to process input change
+                await asyncio.sleep(1)
+                
+                # Query new source immediately
+                new_source = await self._protocol.get_current_source()
+                if new_source:
+                    if new_source in self._physical_to_name:
+                        self._current_source = self._physical_to_name[new_source]
+                    else:
+                        self._current_source = new_source
+                else:
+                    # Assume source changed even if we can't verify
+                    self._current_source = source
+                
                 self.async_write_ha_state()
                 _LOGGER.info("Source selected: %s", source)
         else:
