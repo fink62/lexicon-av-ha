@@ -139,45 +139,60 @@ class LexiconMediaPlayer(MediaPlayerEntity):
     async def _async_update_status(self) -> None:
         """Query receiver status and update entity state."""
         try:
-            # Query power state
+            # Query ALL status first, then determine overall state
+            
+            # Query volume
+            volume = await self._protocol.get_volume()
+            if volume is not None:
+                # Convert 0-99 to 0.0-1.0 and round to 2 decimals
+                self._volume_level = round(volume / 99.0, 2)
+                _LOGGER.debug("Volume query: %d (%.2f)", volume, self._volume_level)
+            else:
+                _LOGGER.debug("Volume query returned None")
+            
+            # Query mute state
+            mute = await self._protocol.get_mute_state()
+            if mute is not None:
+                self._is_volume_muted = mute
+                _LOGGER.debug("Mute query: %s", mute)
+            else:
+                _LOGGER.debug("Mute query returned None")
+            
+            # Query current source
+            source = await self._protocol.get_current_source()
+            if source is not None:
+                _LOGGER.debug("Source query returned: %s", source)
+                # Map physical source to custom name if mapping exists
+                if source in self._physical_to_name:
+                    self._current_source = self._physical_to_name[source]
+                    _LOGGER.debug("Mapped %s -> %s", source, self._current_source)
+                else:
+                    self._current_source = source
+                    _LOGGER.debug("No mapping for %s, using as-is", source)
+            else:
+                _LOGGER.debug("Source query returned None")
+            
+            # Query power state LAST (and determine overall state)
             power_state = await self._protocol.get_power_state()
             if power_state is not None:
                 if power_state:
-                    # Device is on - query more details
                     self._state = MediaPlayerState.ON
-                    
-                    # Query volume
-                    volume = await self._protocol.get_volume()
-                    if volume is not None:
-                        # Convert 0-99 to 0.0-1.0 and round to 2 decimals
-                        self._volume_level = round(volume / 99.0, 2)
-                    
-                    # Query mute state
-                    mute = await self._protocol.get_mute_state()
-                    if mute is not None:
-                        self._is_volume_muted = mute
-                    
-                    # Query current source
-                    source = await self._protocol.get_current_source()
-                    if source is not None:
-                        # Map physical source to custom name if mapping exists
-                        if source in self._physical_to_name:
-                            self._current_source = self._physical_to_name[source]
-                        else:
-                            self._current_source = source
-                    
-                    _LOGGER.debug(
-                        "Status update: power=%s, volume=%s, mute=%s, source=%s",
-                        power_state, self._volume_level, self._is_volume_muted, self._current_source
-                    )
+                    _LOGGER.debug("Power state: ON")
                 else:
-                    # Device is off
                     self._state = MediaPlayerState.OFF
-                    _LOGGER.debug("Status update: device is OFF")
+                    _LOGGER.debug("Power state: OFF")
             else:
-                # Could not determine power state - might be disconnected
-                _LOGGER.debug("Could not query power state - device might be disconnected")
-                # Don't change state if we can't reach the device
+                # If we can query volume/source, assume device is on
+                if volume is not None or source is not None:
+                    self._state = MediaPlayerState.ON
+                    _LOGGER.debug("Power query failed but got volume/source, assuming ON")
+                else:
+                    _LOGGER.debug("All queries failed, device might be disconnected")
+            
+            _LOGGER.debug(
+                "Status update complete: power=%s, volume=%s, mute=%s, source=%s",
+                self._state, self._volume_level, self._is_volume_muted, self._current_source
+            )
             
             # Update HA state
             self.async_write_ha_state()

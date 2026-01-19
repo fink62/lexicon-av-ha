@@ -332,6 +332,7 @@ class LexiconProtocol:
         if data and len(data) >= 1:
             source_code = data[0]
             _LOGGER.debug("Received source code: 0x%02X (decimal: %d)", source_code, source_code)
+            _LOGGER.debug("SOURCE_CODES dict: %s", SOURCE_CODES)
             source_name = SOURCE_CODES.get(source_code, f"UNKNOWN_0x{source_code:02X}")
             _LOGGER.debug("Mapped to source name: %s", source_name)
             return source_name

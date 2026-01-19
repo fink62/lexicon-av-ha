@@ -2,6 +2,30 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.2.2] - 2025-01-19
+
+### Fixed
+- **CRITICAL: Status polling now works even when power state query fails**
+  - Always queries volume, mute, and source regardless of power state
+  - If power query fails but volume/source succeed, assumes device is ON
+  - Fixes issue where receiver appears OFF but is actually playing
+
+### Changed
+- Status update logic: Query ALL status first, determine power state last
+- Enhanced debug logging shows each query result individually
+- Power state determination is more robust
+
+### Debug Improvements
+- Shows SOURCE_CODES dict contents in logs
+- Detailed logging for each status query (volume, mute, source, power)
+- Shows physical → custom name mapping in logs
+
+### Technical
+- Refactored `_async_update_status()` to query unconditionally
+- Added fallback logic: if power query fails but others succeed, assume ON
+
+---
+
 ## [1.2.1] - 2025-01-19
 
 ### Fixed
