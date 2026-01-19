@@ -49,3 +49,33 @@ PROTOCOL_ZONE1 = 0x01
 PROTOCOL_CMD_SIMULATE_RC5 = 0x08
 PROTOCOL_DATA_LENGTH = 0x02
 PROTOCOL_ANSWER_OK = 0x00
+
+# Status Query Commands
+PROTOCOL_CMD_POWER = 0x00          # Request power state
+PROTOCOL_CMD_VOLUME = 0x0D         # Set/Request volume (0x00-0x63 = 0-99)
+PROTOCOL_CMD_MUTE = 0x0E           # Request mute status
+PROTOCOL_CMD_CURRENT_SOURCE = 0x1D # Request current source
+
+# Request Data Byte
+PROTOCOL_REQUEST = 0xF0
+
+# Polling
+DEFAULT_SCAN_INTERVAL = 30  # seconds
+
+# Source Code Mapping (reverse of LEXICON_INPUTS for status queries)
+SOURCE_CODES = {
+    0x00: "FOLLOW_ZONE1",
+    0x76: "CD",
+    0x62: "BD",
+    0x5E: "AV",
+    0x1B: "SAT",
+    0x60: "PVR",
+    0x77: "VCR",
+    0x63: "AUX",
+    0x3A: "DISPLAY",
+    0x5B: "RADIO",
+    0x5C: "NET",
+    0x5D: "USB",
+    0x64: "STB",
+    0x61: "GAME",
+}
