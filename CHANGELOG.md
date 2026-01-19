@@ -2,6 +2,51 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.2.0] - 2025-01-19
+
+### Added
+- **Volume Level Display** - Shows current volume (0-99) in UI
+- **Absolute Volume Control** - Set volume to specific level via slider
+- **Status Polling** - Automatic status updates every 30 seconds
+  - Power state
+  - Volume level
+  - Mute status
+  - Current source
+- **Current Source Display** - Shows actual selected input (not just last command sent)
+- **Real Power State** - Queries actual power state instead of assuming
+
+### Changed
+- Volume control now supports both relative (up/down) and absolute (slider) control
+- Media player now actively polls receiver status to reflect external changes
+- State updates include volume level as a float (0.0-1.0) for HA compatibility
+- Volume up/down now queries new volume after command
+
+### Improved
+- Better synchronization with receiver state
+- Reflects changes made via remote control or front panel
+- Volume slider in UI shows actual receiver volume
+- Source display shows what's actually playing, not just what was selected via HA
+
+### Technical
+- Added status query commands (0x00, 0x0D, 0x0E, 0x1D)
+- Implemented `_send_query()` method for status requests
+- Added `DEFAULT_SCAN_INTERVAL = 30` seconds
+- New methods in `LexiconProtocol`:
+  - `get_power_state()`
+  - `get_volume()`
+  - `get_mute_state()`
+  - `get_current_source()`
+  - `set_volume(volume)`
+- Added `SOURCE_CODES` reverse mapping (code → name)
+- Polling implemented via `async_track_time_interval`
+- Added `MediaPlayerEntityFeature.VOLUME_SET`
+
+### Known Limitations
+- Polling only works when receiver is powered on
+- Status queries require RS232 control to be enabled
+
+---
+
 ## [1.1.3] - 2025-01-18
 
 ### Changed
