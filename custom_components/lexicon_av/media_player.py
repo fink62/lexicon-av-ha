@@ -254,7 +254,7 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             else:
                 # Clear transition lock if expired
                 if self._power_transition_until:
-                    _LOGGER.debug("Power transition lock expired")
+                    _LOGGER.info("Power transition lock expired, querying actual state")
                     self._power_transition_until = None
                 
                 power_state = await self._protocol.get_power_state()
@@ -370,14 +370,9 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         self.async_write_ha_state()
         
         if await self._protocol.power_on():
-            # Immediate status query after power on
-            await self._async_update_status()
-            # Mark as ready if we can query volume (means receiver is responding)
-            if self._volume_level is not None:
-                self._ready = True
-                _LOGGER.info("Lexicon turned ON and ready")
-            else:
-                _LOGGER.info("Lexicon turned ON successfully")
+            _LOGGER.info("Lexicon power ON command sent, waiting for receiver to boot")
+            # DON'T query status immediately - receiver needs time to boot
+            # Polling will update ready status once receiver responds
         else:
             # If command failed, clear lock and revert
             self._power_transition_until = None

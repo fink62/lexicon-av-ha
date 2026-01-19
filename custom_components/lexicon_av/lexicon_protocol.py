@@ -408,9 +408,16 @@ class LexiconProtocol:
         
         if data and len(data) >= 1:
             power_state = data[0]
+            is_on = (power_state == 0x01)
+            _LOGGER.debug(
+                "Power state query: raw=0x%02X (%d), interpreted as %s (0x01=ON, 0x00=STANDBY)",
+                power_state, power_state, "ON" if is_on else "STANDBY"
+            )
             # 0x00 = standby, 0x01 = powered on
-            return power_state == 0x01
-        return None
+            return is_on
+        else:
+            _LOGGER.warning("Power state query returned no data")
+            return None
 
     async def get_volume(self) -> Optional[int]:
         """
