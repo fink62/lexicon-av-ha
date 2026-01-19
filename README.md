@@ -81,13 +81,13 @@ Map physical Lexicon inputs to your actual devices:
 
 | Your Device | Lexicon Input | Configuration Example |
 |-------------|---------------|----------------------|
-| Sony BluRay | BD | `DISC → BD` |
-| Bluesound (Digital) | CD | `BLUESOUNDd → CD` |
-| Bluesound (Analog) | PVR | `BLUESOUNDa → PVR` |
-| Turntable | STB | `PHONO → STB` |
-| TV (ARC) | DISPLAY | `TV_ARC → DISPLAY` |
+| Sony BluRay | BD | DISC |
+| Bluesound (Digital) | CD | BLUESOUNDd |
+| Bluesound (Analog) | PVR | BLUESOUNDa |
+| Turntable | STB | PHONO |
+| TV (ARC) | DISPLAY | TV ARC |
 
-**Important:** TV Audio Return Channel uses the `DISPLAY` input, not `AV`.
+**Note:** TV Audio Return Channel uses the `DISPLAY` input, not `AV`.
 
 ### Available Inputs
 
