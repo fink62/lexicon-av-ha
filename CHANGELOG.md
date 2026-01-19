@@ -2,6 +2,91 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.4.2] - 2025-01-19
+
+### Added
+- **Ready Attribute** - New `ready` attribute indicates when receiver is fully operational
+  - `true`: Receiver is ON and responding to queries
+  - `false`: Receiver is OFF, booting, or not responding
+  - Available as: `{{ state_attr('media_player.lexicon_av', 'ready') }}`
+
+### Usage in Scripts
+
+**Wait for receiver to be ready:**
+```yaml
+script:
+  watch_movie:
+    sequence:
+      - service: media_player.turn_on
+        target:
+          entity_id: media_player.lexicon_av
+      
+      # Wait for ready attribute
+      - wait_template: "{{ state_attr('media_player.lexicon_av', 'ready') }}"
+        timeout: 10
+        continue_on_timeout: false
+      
+      # Now safe to select source
+      - service: media_player.select_source
+        data:
+          source: "DISC"
+```
+
+**Or use in condition:**
+```yaml
+- condition: template
+  value_template: "{{ state_attr('media_player.lexicon_av', 'ready') }}"
+```
+
+### Behavior
+- `ready` becomes `true` when:
+  - Device state is ON
+  - Volume query succeeds (receiver is responding)
+- `ready` becomes `false` when:
+  - Device turns OFF
+  - Queries fail (device not responding)
+
+### Technical
+- Ready status set in `async_turn_on()` after successful status query
+- Updated during polling based on query responses
+- Always included in `extra_state_attributes`
+
+---
+
+## [1.4.1] - 2025-01-19
+
+### Fixed - CRITICAL
+- **Power State Race Condition** - Fixes state reverting to OFF during receiver boot
+  - Issue: When turning ON, status polling during boot would query power state and get "OFF" response, overwriting the ON state
+  - Solution: Added power transition lock that prevents power state queries for 10 seconds after power ON command
+  - Result: State stays ON while receiver boots, no more flickering to OFF
+
+### Added
+- Power transition lock mechanism
+  - 10 seconds after power ON (gives receiver time to boot)
+  - 5 seconds after power OFF (faster transition)
+  - Optimistically sets state immediately when user presses power
+  - Polling respects lock and doesn't override state during transition
+
+### Technical
+- Added `_power_transition_until` timestamp attribute
+- `async_turn_on()` sets optimistic ON state immediately
+- `_async_update_status()` skips power query during transition
+- Lock automatically expires after timeout
+
+### Behavior
+**Before (BROKEN):**
+```
+User clicks ON → State: ON → Receiver boots (3s) → Poll queries power → Gets "OFF" → State: OFF ❌
+```
+
+**After (FIXED):**
+```
+User clicks ON → State: ON → Lock for 10s → Receiver boots → Lock expires → Poll queries → State: ON ✅
+```
+
+---
+
 ## [1.4.0] - 2025-01-19
 
 ### Added - Audio Status Information

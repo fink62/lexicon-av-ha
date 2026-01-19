@@ -1,7 +1,7 @@
 """Lexicon AV Receiver Media Player entity."""
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
@@ -96,6 +96,10 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         self._decode_mode = None
         self._sample_rate = None
         self._direct_mode = None
+        
+        # Power transition lock
+        self._power_transition_until = None  # Timestamp until which to ignore power queries
+        self._ready = False  # Indicates if receiver is fully operational
 
         # Set unique ID
         self._attr_unique_id = f"lexicon_av_{protocol._host}"
@@ -244,25 +248,43 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                     _LOGGER.debug("Direct mode: %s", direct_mode)
             
             # Query power state LAST (and determine overall state)
-            power_state = await self._protocol.get_power_state()
-            if power_state is not None:
-                if power_state:
-                    self._state = MediaPlayerState.ON
-                    _LOGGER.debug("Power state: ON")
-                else:
-                    self._state = MediaPlayerState.OFF
-                    _LOGGER.debug("Power state: OFF")
+            # BUT: Skip if we're in power transition (to avoid overwriting optimistic state)
+            if self._power_transition_until and datetime.now() < self._power_transition_until:
+                _LOGGER.debug("Power transition in progress, skipping power state query")
             else:
-                # If we can query volume/source, assume device is on
-                if volume is not None or source is not None:
-                    self._state = MediaPlayerState.ON
-                    _LOGGER.debug("Power query failed but got volume/source, assuming ON")
+                # Clear transition lock if expired
+                if self._power_transition_until:
+                    _LOGGER.debug("Power transition lock expired")
+                    self._power_transition_until = None
+                
+                power_state = await self._protocol.get_power_state()
+                if power_state is not None:
+                    if power_state:
+                        self._state = MediaPlayerState.ON
+                        _LOGGER.debug("Power state: ON")
+                    else:
+                        self._state = MediaPlayerState.OFF
+                        _LOGGER.debug("Power state: OFF")
                 else:
-                    _LOGGER.debug("All queries failed, device might be disconnected")
+                    # If we can query volume/source, assume device is on
+                    if volume is not None or source is not None:
+                        self._state = MediaPlayerState.ON
+                        _LOGGER.debug("Power query failed but got volume/source, assuming ON")
+                    else:
+                        _LOGGER.debug("All queries failed, device might be disconnected")
+            
+            # Update ready status based on successful queries
+            # Ready = device is ON and responding to queries
+            if self._state == MediaPlayerState.ON and (volume is not None or source is not None):
+                if not self._ready:
+                    _LOGGER.info("Receiver is now ready")
+                self._ready = True
+            else:
+                self._ready = False
             
             _LOGGER.debug(
-                "Status update complete: power=%s, volume=%s, mute=%s, source=%s",
-                self._state, self._volume_level, self._is_volume_muted, self._current_source
+                "Status update complete: power=%s, volume=%s, mute=%s, source=%s, ready=%s",
+                self._state, self._volume_level, self._is_volume_muted, self._current_source, self._ready
             )
             
             # Update HA state
@@ -311,7 +333,9 @@ class LexiconMediaPlayer(MediaPlayerEntity):
     @property
     def extra_state_attributes(self) -> dict:
         """Return additional state attributes."""
-        attrs = {}
+        attrs = {
+            "ready": self._ready  # Always include ready status
+        }
         
         if self._audio_format:
             attrs["audio_format"] = self._audio_format
@@ -338,24 +362,47 @@ class LexiconMediaPlayer(MediaPlayerEntity):
     async def async_turn_on(self) -> None:
         """Turn the media player on."""
         _LOGGER.info("Turning ON Lexicon (via power toggle)")
+        
+        # Set power transition lock for 10 seconds
+        self._power_transition_until = datetime.now() + timedelta(seconds=10)
+        self._state = MediaPlayerState.ON  # Optimistically set to ON
+        self._ready = False  # Not ready yet
+        self.async_write_ha_state()
+        
         if await self._protocol.power_on():
-            self._state = MediaPlayerState.ON
             # Immediate status query after power on
             await self._async_update_status()
-            _LOGGER.info("Lexicon turned ON successfully")
+            # Mark as ready if we can query volume (means receiver is responding)
+            if self._volume_level is not None:
+                self._ready = True
+                _LOGGER.info("Lexicon turned ON and ready")
+            else:
+                _LOGGER.info("Lexicon turned ON successfully")
         else:
+            # If command failed, clear lock and revert
+            self._power_transition_until = None
+            self._state = MediaPlayerState.OFF
+            self._ready = False
+            self.async_write_ha_state()
             _LOGGER.error("Failed to turn ON - check connection and RS232 Control setting")
 
     async def async_turn_off(self) -> None:
         """Turn the media player off."""
         _LOGGER.info("Turning OFF Lexicon (via power toggle)")
+        
+        # Set power transition lock for 5 seconds (OFF is faster than ON)
+        self._power_transition_until = datetime.now() + timedelta(seconds=5)
+        
         if await self._protocol.power_off():
             self._state = MediaPlayerState.OFF
+            self._ready = False
             self._volume_level = None
             self._current_source = None
             self.async_write_ha_state()
             _LOGGER.info("Lexicon turned OFF successfully")
         else:
+            # If command failed, clear lock
+            self._power_transition_until = None
             _LOGGER.error("Failed to turn OFF - check connection and RS232 Control setting")
 
     async def async_volume_up(self) -> None:
