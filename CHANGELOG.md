@@ -2,6 +2,24 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.5.2] - 2025-01-19
+
+### Fixed - CRITICAL
+- **Entity not being created** - Invalid MediaPlayerState.UNKNOWN
+  - Issue: Used `MediaPlayerState.UNKNOWN` which doesn't exist in HA
+  - Valid states: OFF, ON, IDLE, PLAYING, PAUSED
+  - Fix: Changed to `MediaPlayerState.OFF` (updated by first poll)
+  - Result: Entity now creates properly
+
+- **Import order issue** - LexiconProtocol import placement
+  - Moved import to correct location with other local imports
+  - Ensures proper module loading
+
+### Technical
+This was a critical regression from v1.5.0 that prevented the integration from loading at all.
+
+---
+
 ## [1.5.1] - 2025-01-19
 
 ### Changed - Improved Source Display

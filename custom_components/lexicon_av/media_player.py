@@ -23,12 +23,12 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     LEXICON_INPUTS,
 )
+from .lexicon_protocol import LexiconProtocol
 
 # Polling intervals
 SCAN_INTERVAL_ON = 30      # 30 seconds when device is on
 SCAN_INTERVAL_OFF = 120    # 2 minutes when device is off
 SCAN_INTERVAL_STARTUP = 5  # 5 seconds for first few polls after startup
-from .lexicon_protocol import LexiconProtocol
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -92,9 +92,9 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             self._source_list = list(LEXICON_INPUTS.keys())
         
         self._current_source = None
-        self._state = MediaPlayerState.UNKNOWN  # Query actual state on startup
+        self._state = MediaPlayerState.OFF  # Will be updated by first poll
         self._is_volume_muted = False
-        self._volume_level = None  # 0.0 - 1.0
+        self._volume_level = None  # Will be set by first poll
         self._cancel_polling = None
         self._poll_count = 0  # Track number of polls for startup optimization
         
