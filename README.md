@@ -1,7 +1,7 @@
 # Lexicon AV Receiver Integration for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![GitHub release](https://img.shields.io/github/release/USERNAME/lexicon-av-ha.svg)](https://GitHub.com/USERNAME/lexicon-av-ha/releases/)
+[![GitHub release](https://img.shields.io/github/release/fink62/lexicon-av-ha.svg)](https://GitHub.com/fink62/lexicon-av-ha/releases/)
 
 Home Assistant integration for Lexicon AV Receivers (RV-9, RV-6, MC-10) via RS232/IP control.
 
