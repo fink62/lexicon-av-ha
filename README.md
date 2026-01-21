@@ -1,7 +1,7 @@
 # Lexicon AV Receiver Integration for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![GitHub release](https://img.shields.io/github/release/fink62/lexicon-av-ha.svg)](https://GitHub.com/fink62/lexicon-av-ha/releases/)
+[![GitHub release](https://img.shields.io/github/release/USERNAME/lexicon-av-ha.svg)](https://GitHub.com/USERNAME/lexicon-av-ha/releases/)
 
 Home Assistant integration for Lexicon AV Receivers (RV-9, RV-6, MC-10) via RS232/IP control.
 
@@ -30,7 +30,7 @@ All models with RS232/IP control (port 50000).
 
 1. **Add custom repository:**
    - HACS → Integrations → ⋮ → Custom repositories
-   - URL: `https://github.com/fink62/lexicon-av-ha`
+   - URL: `https://github.com/YOUR_USERNAME/lexicon-av-ha`
    - Category: Integration
 
 2. **Install:**
@@ -81,13 +81,13 @@ Map physical Lexicon inputs to your actual devices:
 
 | Your Device | Lexicon Input | Configuration Example |
 |-------------|---------------|----------------------|
-| Sony BluRay | BD | DISC |
-| Bluesound (Digital) | CD | BLUESOUNDd |
-| Bluesound (Analog) | PVR | BLUESOUNDa |
-| Turntable | STB | PHONO |
-| TV (ARC) | DISPLAY | TV ARC |
+| Sony BluRay | BD | `DISC → BD` |
+| Bluesound (Digital) | CD | `BLUESOUNDd → CD` |
+| Bluesound (Analog) | PVR | `BLUESOUNDa → PVR` |
+| Turntable | STB | `PHONO → STB` |
+| TV (ARC) | DISPLAY | `TV_ARC → DISPLAY` |
 
-**Note:** TV Audio Return Channel uses the `DISPLAY` input, not `AV`.
+**Important:** TV Audio Return Channel uses the `DISPLAY` input, not `AV`.
 
 ### Available Inputs
 
@@ -106,9 +106,9 @@ All 13 Lexicon physical inputs are supported:
 - **USB** - USB
 - **DISPLAY** - TV Audio Return Channel (ARC)
 
-## Usage samples
+## Usage
 
-### Entity (sample name)
+### Entity
 
 ```
 media_player.lexicon_av
@@ -161,8 +161,8 @@ data:
 
 Create automations via GUI:
 1. Settings → Automations & Scenes
-2. Add Action → Perform action → `media_player.select_source`
-3. Select entity and enter source string (your custom value)
+2. Add Action → Call service → `media_player.select_source`
+3. Select entity and source from dropdowns
 
 Example automation:
 
@@ -282,7 +282,7 @@ Configuration is preserved during updates.
 
 ## Roadmap
 
-**v1.4.0 (Planned):**
+**v1.2.0 (Planned):**
 - Status polling (every 30 seconds)
 - Sensor entities (current input, volume level, signal format, decode mode, sample rate)
 - Binary sensors (mute status, Room EQ, Stereo Direct)

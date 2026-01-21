@@ -284,6 +284,39 @@ class LexiconProtocol:
             await self._cleanup_connection()
             return None
 
+    async def _send_query_with_retry(self, command: bytes) -> Optional[bytes]:
+        """
+        Send query with automatic retry on connection error.
+        
+        Tries once, if fails: disconnect, wait, reconnect, retry once more.
+        This improves reliability for transient connection issues.
+        """
+        try:
+            return await self._send_query(command)
+        except (ConnectionError, OSError, BrokenPipeError) as err:
+            _LOGGER.warning("Query failed: %s - Attempting reconnect and retry", err)
+            
+            # Clean disconnect
+            try:
+                await self.disconnect()
+            except Exception:
+                pass  # Ignore disconnect errors
+            
+            # Brief pause before reconnect
+            await asyncio.sleep(0.5)
+            
+            # Reconnect and retry
+            if await self.connect():
+                _LOGGER.info("Reconnected successfully, retrying query")
+                try:
+                    return await self._send_query(command)
+                except Exception as retry_err:
+                    _LOGGER.error("Retry also failed: %s", retry_err)
+                    return None
+            else:
+                _LOGGER.error("Reconnect failed, giving up")
+                return None
+
     async def _cleanup_connection(self):
         """Clean up broken connection without holding the lock."""
         try:
@@ -404,7 +437,7 @@ class LexiconProtocol:
         Returns: True = on, False = standby, None = error
         """
         command = self._build_query_command(PROTOCOL_CMD_POWER)
-        data = await self._send_query(command)
+        data = await self._send_query_with_retry(command)
         
         if data and len(data) >= 1:
             power_state = data[0]
@@ -425,7 +458,7 @@ class LexiconProtocol:
         Returns: Volume (0-99), None = error
         """
         command = self._build_query_command(PROTOCOL_CMD_VOLUME)
-        data = await self._send_query(command)
+        data = await self._send_query_with_retry(command)
         
         if data and len(data) >= 1:
             volume = data[0]
@@ -439,7 +472,7 @@ class LexiconProtocol:
         Returns: True = muted, False = not muted, None = error
         """
         command = self._build_query_command(PROTOCOL_CMD_MUTE)
-        data = await self._send_query(command)
+        data = await self._send_query_with_retry(command)
         
         if data and len(data) >= 1:
             mute_state = data[0]
@@ -455,7 +488,7 @@ class LexiconProtocol:
         Returns: Source name (e.g., "BD", "CD"), None = error
         """
         command = self._build_query_command(PROTOCOL_CMD_CURRENT_SOURCE)
-        data = await self._send_query(command)
+        data = await self._send_query_with_retry(command)
         
         if data and len(data) >= 1:
             source_code = data[0]
@@ -471,7 +504,7 @@ class LexiconProtocol:
         Returns: True = on, False = off, None = error
         """
         command = self._build_query_command(PROTOCOL_CMD_DIRECT_MODE)
-        data = await self._send_query(command)
+        data = await self._send_query_with_retry(command)
         
         if data and len(data) >= 1:
             direct_mode = data[0]
@@ -538,6 +571,23 @@ class LexiconProtocol:
             _LOGGER.debug("Sample rate: %s (code: 0x%02X)", rate_name, rate_code)
             return rate_name
         return None
+
+    async def heartbeat(self) -> bool:
+        """
+        Send heartbeat to verify connection is alive.
+        Uses command 0x25.
+        
+        Returns: True if receiver responds, False otherwise
+        """
+        command = self._build_query_command(PROTOCOL_CMD_HEARTBEAT)
+        data = await self._send_query_with_retry(command)
+        
+        if data is not None:
+            _LOGGER.debug("❤️ Heartbeat OK")
+            return True
+        else:
+            _LOGGER.warning("💔 Heartbeat failed")
+            return False
 
     @property
     def is_connected(self) -> bool:

@@ -26,7 +26,9 @@ LEXICON_INPUTS = {
     "GAME": 0x61,     # Game Console
     "VCR": 0x77,      # Video Cassette Recorder
     "AUX": 0x63,      # Auxiliary
-    "RADIO": 0x5B,    # Tuner/Radio
+    "RADIO": 0x5B,    # Tuner/Radio (toggle FM/DAB)
+    "FM": 0x1C,       # FM Radio
+    "DAB": 0x48,      # DAB Radio
     "NET": 0x5C,      # Network
     "USB": 0x5D,      # USB
     "DISPLAY": 0x3A,  # TV Audio Return Channel (ARC)
@@ -80,8 +82,8 @@ SOURCE_CODES = {
     0x06: "VCR",
     0x08: "AUX",
     0x09: "DISPLAY",
-    0x0B: "RADIO",      # FM
-    0x0C: "RADIO_DAB",  # DAB
+    0x0B: "FM",       # FM Radio
+    0x0C: "DAB",      # DAB Radio
     0x0E: "NET",
     0x0F: "USB",
     0x10: "STB",

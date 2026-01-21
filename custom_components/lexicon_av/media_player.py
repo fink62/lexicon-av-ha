@@ -27,7 +27,7 @@ from .lexicon_protocol import LexiconProtocol
 
 # Polling intervals
 SCAN_INTERVAL_ON = 30      # 30 seconds when device is on
-SCAN_INTERVAL_OFF = 120    # 2 minutes when device is off
+SCAN_INTERVAL_OFF = 30     # 30 seconds when device is off (was 120 - too slow!)
 SCAN_INTERVAL_STARTUP = 5  # 5 seconds for first few polls after startup
 
 _LOGGER = logging.getLogger(__name__)
@@ -107,6 +107,7 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         # Power transition lock
         self._power_transition_until = None  # Timestamp until which to ignore power queries
         self._ready = False  # Indicates if receiver is fully operational
+        self._last_successful_poll = None  # Track last successful query timestamp
 
         # Set unique ID
         self._attr_unique_id = f"lexicon_av_{protocol._host}"
@@ -118,24 +119,12 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         }
 
     async def async_added_to_hass(self) -> None:
-        """Run when entity is added to hass - establish initial connection and start polling."""
+        """Run when entity is added to hass - start polling (connection per poll cycle)."""
         await super().async_added_to_hass()
         
-        # Try to establish initial connection
-        _LOGGER.info("Establishing initial connection to Lexicon...")
-        if await self._protocol.connect():
-            self._state = MediaPlayerState.IDLE
-            _LOGGER.info("Initial connection successful")
-            
-            # Do initial status update
-            await self._async_update_status()
-        else:
-            self._state = MediaPlayerState.OFF
-            _LOGGER.warning("Initial connection failed, will retry on first command")
-        
-        # Start adaptive polling
+        # Start adaptive polling (connection will be established per poll cycle)
+        _LOGGER.info("Starting adaptive status polling (connect/disconnect per cycle)")
         await self._schedule_next_poll()
-        _LOGGER.info("Adaptive status polling started")
 
     async def _schedule_next_poll(self):
         """Schedule next poll with adaptive interval based on device state."""
@@ -187,15 +176,37 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         # Update status
         await self._async_update_status()
         
-        # If state changed, reschedule with new interval
+        # If state changed, reschedule immediately for faster update
         if previous_state != self._state:
-            _LOGGER.info("State changed from %s to %s, adjusting poll interval", previous_state, self._state)
-            await self._schedule_next_poll()
+            _LOGGER.info("State changed from %s to %s, triggering immediate next poll", previous_state, self._state)
+            # Cancel current timer
+            if self._cancel_polling:
+                self._cancel_polling()
+            # Schedule immediate poll (5 seconds) to confirm state
+            self._cancel_polling = async_track_time_interval(
+                self.hass,
+                self._async_polling_update,
+                timedelta(seconds=5),
+            )
 
     async def _async_update_status(self) -> None:
-        """Query receiver status and update entity state."""
+        """Query receiver status and update entity state with value caching."""
+        
+        # Connect for this poll cycle
+        _LOGGER.debug("=== Poll #%d: Connecting ===", self._poll_count)
+        if not await self._protocol.connect():
+            _LOGGER.warning("⚠️ Could not connect for poll #%d (App using receiver?)", self._poll_count)
+            # Keep cached values, mark as not ready
+            self._ready = False
+            self._state = MediaPlayerState.OFF
+            self.async_write_ha_state()
+            return
+        
         try:
             _LOGGER.debug("=== Status update poll #%d ===", self._poll_count)
+            
+            # Track if ANY query succeeded (for cache timestamp)
+            queries_succeeded = False
             
             # STEP 1: Query power state FIRST
             power_state = None
@@ -214,15 +225,20 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 _LOGGER.debug("Power query result: %s", power_state)
             
             # STEP 2: Query all status (always, regardless of power)
+            # CACHING: Only update if query succeeds, keep old value on failure
             volume = await self._protocol.get_volume()
             if volume is not None:
                 self._volume_level = round(volume / 99.0, 2)
+                queries_succeeded = True
                 _LOGGER.debug("Volume: %d -> %.2f", volume, self._volume_level)
+            # else: keep old _volume_level value
             
             mute = await self._protocol.get_mute_state()
             if mute is not None:
                 self._is_volume_muted = mute
+                queries_succeeded = True
                 _LOGGER.debug("Mute: %s", mute)
+            # else: keep old _is_volume_muted value
             
             source = await self._protocol.get_current_source()
             if source is not None:
@@ -234,6 +250,8 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 else:
                     self._current_source = source
                     _LOGGER.debug("Source: %s (no mapping)", source)
+                queries_succeeded = True
+            # else: keep old _current_source value
             
             # STEP 3: Determine power state with fallback
             if power_state is not None:
@@ -242,7 +260,7 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                     self._state = MediaPlayerState.ON
                 else:
                     self._state = MediaPlayerState.OFF
-                    # Clear audio when OFF
+                    # Only clear audio when transitioning to OFF
                     self._audio_format = None
                     self._decode_mode = None
                     self._sample_rate = None
@@ -252,27 +270,36 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 self._state = MediaPlayerState.ON
                 _LOGGER.info("Power query failed, but got volume/source -> assuming ON")
             else:
-                # All failed -> OFF
+                # All failed -> assume OFF, but keep cached attributes visible
                 self._state = MediaPlayerState.OFF
-                _LOGGER.warning("All queries failed -> assuming OFF")
+                _LOGGER.warning("All queries failed -> assuming OFF (cached values retained)")
             
             # STEP 4: Query audio status ONLY if ON
+            # CACHING: Only update if query succeeds
             if self._state == MediaPlayerState.ON:
                 audio_format = await self._protocol.get_audio_format()
                 if audio_format:
                     self._audio_format = audio_format
+                    queries_succeeded = True
+                # else: keep old _audio_format
                 
                 decode_mode = await self._protocol.get_decode_mode()
                 if decode_mode:
                     self._decode_mode = decode_mode
+                    queries_succeeded = True
+                # else: keep old _decode_mode
                 
                 sample_rate = await self._protocol.get_sample_rate()
                 if sample_rate:
                     self._sample_rate = sample_rate
+                    queries_succeeded = True
+                # else: keep old _sample_rate
                 
                 direct_mode = await self._protocol.get_direct_mode()
                 if direct_mode is not None:
                     self._direct_mode = direct_mode
+                    queries_succeeded = True
+                # else: keep old _direct_mode
             
             # STEP 5: Set ready status
             if self._state == MediaPlayerState.ON and (volume is not None or source is not None):
@@ -283,6 +310,14 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 if self._ready:
                     _LOGGER.info("❌ Receiver is NOT READY")
                 self._ready = False
+            
+            # Track last successful poll timestamp
+            if queries_succeeded:
+                self._last_successful_poll = datetime.now()
+                _LOGGER.debug("✅ Poll succeeded, values cached at %s", 
+                            self._last_successful_poll.strftime("%H:%M:%S"))
+            else:
+                _LOGGER.warning("⚠️ All queries failed, keeping cached values")
             
             _LOGGER.debug(
                 "Poll complete: state=%s ready=%s vol=%.2f mute=%s src=%s",
@@ -295,6 +330,11 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             
         except Exception as err:
             _LOGGER.error("Status update error: %s", err, exc_info=True)
+            self._ready = False
+        finally:
+            # ALWAYS disconnect after poll
+            _LOGGER.debug("=== Poll #%d: Disconnecting ===", self._poll_count)
+            await self._protocol.disconnect()
 
     @property
     def supported_features(self) -> MediaPlayerEntityFeature:
@@ -340,6 +380,19 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             "ready": self._ready  # Always include ready status
         }
         
+        # Connection status tracking
+        if self._last_successful_poll:
+            time_since = datetime.now() - self._last_successful_poll
+            attrs["last_update"] = self._last_successful_poll.strftime("%H:%M:%S")
+            attrs["seconds_since_update"] = int(time_since.total_seconds())
+            # Connection status indicator
+            if time_since.total_seconds() > 120:  # 2 minutes without update
+                attrs["connection_status"] = "Stale"
+            else:
+                attrs["connection_status"] = "OK"
+        else:
+            attrs["connection_status"] = "Unknown"
+        
         # Add integer volume (0-99) for easier use in automations
         if self._volume_level is not None:
             attrs["volume_int"] = int(self._volume_level * 99)
@@ -360,85 +413,129 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         """Turn the media player on."""
         _LOGGER.info("Turning ON Lexicon (via power toggle)")
         
-        # Set power transition lock for 10 seconds
-        self._power_transition_until = datetime.now() + timedelta(seconds=10)
-        self._state = MediaPlayerState.ON  # Optimistically set to ON
-        self._ready = False  # Not ready yet
-        self.async_write_ha_state()
+        # Connect for this command
+        if not await self._protocol.connect():
+            _LOGGER.error("Could not connect to send power ON command")
+            return
         
-        if await self._protocol.power_on():
-            _LOGGER.info("Lexicon power ON command sent, waiting for receiver to boot")
-            # DON'T query status immediately - receiver needs time to boot
-            # Polling will update ready status once receiver responds
-        else:
-            # If command failed, clear lock and revert
-            self._power_transition_until = None
-            self._state = MediaPlayerState.OFF
-            self._ready = False
+        try:
+            # Set power transition lock for 10 seconds
+            self._power_transition_until = datetime.now() + timedelta(seconds=10)
+            self._state = MediaPlayerState.ON  # Optimistically set to ON
+            self._ready = False  # Not ready yet
             self.async_write_ha_state()
-            _LOGGER.error("Failed to turn ON - check connection and RS232 Control setting")
+            
+            if await self._protocol.power_on():
+                _LOGGER.info("Lexicon power ON command sent, waiting for receiver to boot")
+                # DON'T query status immediately - receiver needs time to boot
+                # Polling will update ready status once receiver responds
+            else:
+                # If command failed, clear lock and revert
+                self._power_transition_until = None
+                self._state = MediaPlayerState.OFF
+                self._ready = False
+                self.async_write_ha_state()
+                _LOGGER.error("Failed to turn ON - check connection and RS232 Control setting")
+        finally:
+            await self._protocol.disconnect()
 
     async def async_turn_off(self) -> None:
         """Turn the media player off."""
         _LOGGER.info("Turning OFF Lexicon (via power toggle)")
         
-        # Set power transition lock for 5 seconds (OFF is faster than ON)
-        self._power_transition_until = datetime.now() + timedelta(seconds=5)
+        # Connect for this command
+        if not await self._protocol.connect():
+            _LOGGER.error("Could not connect to send power OFF command")
+            return
         
-        if await self._protocol.power_off():
-            self._state = MediaPlayerState.OFF
-            self._ready = False
-            self._volume_level = None
-            self._current_source = None
-            self.async_write_ha_state()
-            _LOGGER.info("Lexicon turned OFF successfully")
-        else:
-            # If command failed, clear lock
-            self._power_transition_until = None
-            _LOGGER.error("Failed to turn OFF - check connection and RS232 Control setting")
+        try:
+            # Set power transition lock for 5 seconds (OFF is faster than ON)
+            self._power_transition_until = datetime.now() + timedelta(seconds=5)
+            
+            if await self._protocol.power_off():
+                self._state = MediaPlayerState.OFF
+                self._ready = False
+                self._volume_level = None
+                self._current_source = None
+                self.async_write_ha_state()
+                _LOGGER.info("Lexicon turned OFF successfully")
+            else:
+                # If command failed, clear lock
+                self._power_transition_until = None
+                _LOGGER.error("Failed to turn OFF - check connection and RS232 Control setting")
+        finally:
+            await self._protocol.disconnect()
 
     async def async_volume_up(self) -> None:
         """Volume up the media player."""
-        if await self._protocol.volume_up():
-            # Query new volume after short delay
-            await asyncio.sleep(0.3)
-            volume = await self._protocol.get_volume()
-            if volume is not None:
-                self._volume_level = round(volume / 99.0, 2)
-                self.async_write_ha_state()
+        if not await self._protocol.connect():
+            _LOGGER.error("Could not connect for volume up")
+            return
+        
+        try:
+            if await self._protocol.volume_up():
+                # Query new volume after short delay
+                await asyncio.sleep(0.3)
+                volume = await self._protocol.get_volume()
+                if volume is not None:
+                    self._volume_level = round(volume / 99.0, 2)
+                    self.async_write_ha_state()
+        finally:
+            await self._protocol.disconnect()
 
     async def async_volume_down(self) -> None:
         """Volume down the media player."""
-        if await self._protocol.volume_down():
-            # Query new volume after short delay
-            await asyncio.sleep(0.3)
-            volume = await self._protocol.get_volume()
-            if volume is not None:
-                self._volume_level = round(volume / 99.0, 2)
-                self.async_write_ha_state()
+        if not await self._protocol.connect():
+            _LOGGER.error("Could not connect for volume down")
+            return
+        
+        try:
+            if await self._protocol.volume_down():
+                # Query new volume after short delay
+                await asyncio.sleep(0.3)
+                volume = await self._protocol.get_volume()
+                if volume is not None:
+                    self._volume_level = round(volume / 99.0, 2)
+                    self.async_write_ha_state()
+        finally:
+            await self._protocol.disconnect()
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level, range 0..1."""
-        # Convert 0.0-1.0 to 0-99
-        lexicon_volume = int(volume * 99)
-        _LOGGER.debug("Setting volume to %d (%.2f)", lexicon_volume, volume)
+        if not await self._protocol.connect():
+            _LOGGER.error("Could not connect to set volume")
+            return
         
-        if await self._protocol.set_volume(lexicon_volume):
-            self._volume_level = round(volume, 2)
-            self.async_write_ha_state()
-            _LOGGER.info("Volume set to %d", lexicon_volume)
-        else:
-            _LOGGER.error("Failed to set volume")
+        try:
+            # Convert 0.0-1.0 to 0-99
+            lexicon_volume = int(volume * 99)
+            _LOGGER.debug("Setting volume to %d (%.2f)", lexicon_volume, volume)
+            
+            if await self._protocol.set_volume(lexicon_volume):
+                self._volume_level = round(volume, 2)
+                self.async_write_ha_state()
+                _LOGGER.info("Volume set to %d", lexicon_volume)
+            else:
+                _LOGGER.error("Failed to set volume")
+        finally:
+            await self._protocol.disconnect()
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute the volume."""
-        if mute:
-            if await self._protocol.mute_on():
-                self._is_volume_muted = True
-        else:
-            if await self._protocol.mute_off():
-                self._is_volume_muted = False
-        self.async_write_ha_state()
+        if not await self._protocol.connect():
+            _LOGGER.error("Could not connect to toggle mute")
+            return
+        
+        try:
+            if mute:
+                if await self._protocol.mute_on():
+                    self._is_volume_muted = True
+            else:
+                if await self._protocol.mute_off():
+                    self._is_volume_muted = False
+            self.async_write_ha_state()
+        finally:
+            await self._protocol.disconnect()
 
     async def async_select_source(self, source: str) -> None:
         """Select input source."""
@@ -464,24 +561,33 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         if physical_input in LEXICON_INPUTS:
             input_code = LEXICON_INPUTS[physical_input]
             _LOGGER.debug("Selecting source %s (physical: %s, code: 0x%02X)", source, physical_input, input_code)
-            if await self._protocol.select_input(input_code):
-                # Wait a moment for receiver to process input change
-                await asyncio.sleep(1)
-                
-                # Query new source immediately and update with correct format
-                new_source = await self._protocol.get_current_source()
-                if new_source:
-                    if new_source in self._physical_to_name:
-                        custom_name = self._physical_to_name[new_source]
-                        self._current_source = f"{custom_name} ({new_source})"
+            
+            # Connect for this command
+            if not await self._protocol.connect():
+                _LOGGER.error("Could not connect to select source")
+                return
+            
+            try:
+                if await self._protocol.select_input(input_code):
+                    # Wait a moment for receiver to process input change
+                    await asyncio.sleep(1)
+                    
+                    # Query new source immediately and update with correct format
+                    new_source = await self._protocol.get_current_source()
+                    if new_source:
+                        if new_source in self._physical_to_name:
+                            custom_name = self._physical_to_name[new_source]
+                            self._current_source = f"{custom_name} ({new_source})"
+                        else:
+                            self._current_source = new_source
                     else:
-                        self._current_source = new_source
-                else:
-                    # Assume source changed even if we can't verify
-                    self._current_source = source
-                
-                self.async_write_ha_state()
-                _LOGGER.info("Source selected: %s", source)
+                        # Assume source changed even if we can't verify
+                        self._current_source = source
+                    
+                    self.async_write_ha_state()
+                    _LOGGER.info("Source selected: %s", source)
+            finally:
+                await self._protocol.disconnect()
         else:
             _LOGGER.error("Physical input %s not found in LEXICON_INPUTS", physical_input)
 

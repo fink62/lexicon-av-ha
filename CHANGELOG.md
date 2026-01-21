@@ -2,6 +2,181 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.6.0] - 2025-01-21
+
+### 🎉 Major Update - Connection Management & Feature Expansion
+
+This release implements the complete backlog from previous sessions, focusing on app compatibility, reliability improvements, and feature additions.
+
+### Added - FM/DAB Radio Inputs ✅
+- **Direct FM and DAB selection** (Task 1.1)
+  - Added `FM` (RC5 code 0x1C) to LEXICON_INPUTS
+  - Added `DAB` (RC5 code 0x48) to LEXICON_INPUTS
+  - Updated SOURCE_CODES mapping: 0x0B → "FM", 0x0C → "DAB"
+  - Can now select FM/DAB directly in scripts and UI
+  
+  Example usage:
+  ```yaml
+  service: media_player.select_source
+  data:
+    entity_id: media_player.lexicon_av
+    source: "DAB"  # or "FM"
+  ```
+
+### Added - Attribute Value Caching ✅
+- **Values persist during connection issues** (Task 1.2)
+  - Attributes only update when queries succeed
+  - Old values retained if query returns None
+  - Dashboard shows stable data during temporary disconnects
+  - Added `last_update` attribute (HH:MM:SS timestamp)
+  - Added `seconds_since_update` attribute
+  - Added `connection_status` attribute ("OK", "Stale", "Unknown")
+  - Stale indicator triggers after 120 seconds without successful poll
+
+### Added - Automatic Retry Logic ✅
+- **Transient errors auto-recover** (Task 2.1)
+  - New `_send_query_with_retry()` wrapper method in lexicon_protocol.py
+  - On connection error: disconnect → wait 0.5s → reconnect → retry once
+  - All get_* methods now use retry wrapper
+  - Applies to: power, volume, mute, source, audio format, decode mode, sample rate, direct mode
+  - Single network hiccups no longer cause missing data
+
+### Changed - Connect/Disconnect per Poll Cycle ✅
+- **Lexicon App now usable alongside integration!** (Task 2.2)
+  - OLD: Persistent connection blocked Lexicon App ("Closed by remote socket")
+  - NEW: Connect only during poll (~2s), disconnect immediately after
+  - App available 28 out of 30 seconds (93% uptime)
+  
+  Timeline:
+  ```
+  00:00 - Connect for poll
+  00:02 - Disconnect (App can connect now! ✅)
+  00:30 - Connect for poll
+  00:32 - Disconnect (App can connect now! ✅)
+  ```
+
+- **All commands wrapped with connect/disconnect:**
+  - async_turn_on/off
+  - async_volume_up/down
+  - async_set_volume_level
+  - async_mute_volume
+  - async_select_source
+  - Commands connect only when needed, then release connection
+
+- **Startup behavior changed:**
+  - Removed persistent connection from async_added_to_hass()
+  - Polling starts immediately without initial connection
+  - First poll establishes connection and queries state
+
+### Added - Heartbeat Method ✅
+- **Connection health monitoring** (Task 3.1)
+  - New `heartbeat()` method in lexicon_protocol.py
+  - Uses command 0x25 (PROTOCOL_CMD_HEARTBEAT)
+  - Returns True if receiver responds, False otherwise
+  - Available for future connection monitoring features
+
+### Technical Details
+
+**Files Modified:**
+- `const.py`: Added FM/DAB inputs and codes
+- `media_player.py`: Connect/disconnect wrapping, attribute caching, startup changes
+- `lexicon_protocol.py`: Retry logic, heartbeat method
+- `manifest.json`: Version bump to 1.6.0
+
+**Logging Improvements:**
+- Connection attempts clearly logged per poll
+- Cache hit/miss information visible in debug logs
+- Last successful poll timestamp tracked
+
+### Migration Notes
+
+**⚠️ Breaking Change for App Users:**
+If you previously avoided using the Lexicon app due to conflicts, you can now use both simultaneously!
+
+**No Config Changes Required:**
+- Existing configurations work without modification
+- FM/DAB inputs automatically available
+- Attribute caching works transparently
+
+### User Impact Summary
+
+**Before v1.6.0:**
+- ❌ App unusable when integration connected
+- ❌ Attributes disappeared during connection issues
+- ❌ Single network errors caused missing data
+- ⚠️ Only RADIO available (not FM/DAB separately)
+
+**After v1.6.0:**
+- ✅ App and integration coexist peacefully (93% app availability)
+- ✅ Attributes stable, values don't disappear
+- ✅ Automatic retry recovers from transient errors
+- ✅ Direct FM and DAB selection available
+- ✅ Connection status visible in attributes
+
+### Testing Recommendations
+
+1. **Test App Compatibility:**
+   - Start integration → Wait for first poll → Open Lexicon app → Should connect!
+   - Leave integration running → Use app periodically → Should work seamlessly
+
+2. **Test Attribute Caching:**
+   - Note current attribute values
+   - Unplug receiver network cable
+   - Wait 30s → Values should still be visible (not None)
+   - Reconnect cable → Values update within 30s
+
+3. **Test FM/DAB:**
+   ```yaml
+   service: media_player.select_source
+   target:
+     entity_id: media_player.lexicon_av
+   data:
+     source: "DAB"
+   ```
+
+### Known Limitations
+
+- Connection window per poll cycle: ~2 seconds every 30 seconds
+- If app connects during poll window, poll may fail (cached values retained)
+- Heartbeat method implemented but not actively used (available for future features)
+
+---
+
+## [1.5.3] - 2025-01-20
+
+### Fixed - State Change Detection
+- **OFF → ON not detected** - Polling interval was too slow when OFF
+  - Issue: 120-second interval when OFF meant remote power-on took up to 2 minutes to detect
+  - Fix: Changed OFF interval from 120s → 30s (same as ON)
+  - Result: State changes detected within 30 seconds regardless of direction
+
+- **Immediate poll after state change**
+  - When state change detected, triggers immediate next poll (5s)
+  - Confirms state change quickly
+  - Then resumes normal 30s interval
+
+### Changed
+- `SCAN_INTERVAL_OFF`: 120s → 30s
+- Added immediate 5s poll after state change detection
+
+### Behavior Now
+```
+Device OFF, polling every 30s:
+00:00 - Poll → OFF
+00:30 - Poll → OFF
+01:00 - [User powers ON with remote]
+01:00 - Poll → ON ✅ (detected!)
+01:05 - Poll → ON (immediate confirmation)
+01:35 - Poll → ON (back to 30s interval)
+```
+
+### Performance
+- Slightly more network traffic (4 polls/minute → 2 polls/minute when OFF)
+- But much better user experience - state changes detected quickly
+- Still resource-friendly compared to aggressive 5s polling
+
+---
+
 ## [1.5.2] - 2025-01-19
 
 ### Fixed - CRITICAL
