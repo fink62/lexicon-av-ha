@@ -176,18 +176,8 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         # Update status
         await self._async_update_status()
         
-        # If state changed, reschedule immediately for faster update
-        if previous_state != self._state:
-            _LOGGER.info("State changed from %s to %s, triggering immediate next poll", previous_state, self._state)
-            # Cancel current timer
-            if self._cancel_polling:
-                self._cancel_polling()
-            # Schedule immediate poll (5 seconds) to confirm state
-            self._cancel_polling = async_track_time_interval(
-                self.hass,
-                self._async_polling_update,
-                timedelta(seconds=5),
-            )
+        # Schedule next poll using adaptive interval
+        await self._schedule_next_poll()
 
     async def _async_update_status(self) -> None:
         """Query receiver status and update entity state with value caching."""
