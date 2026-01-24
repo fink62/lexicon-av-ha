@@ -109,6 +109,10 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         self._ready = False  # Indicates if receiver is fully operational
         self._last_successful_poll = None  # Track last successful query timestamp
 
+        # Connection lock (v1.7.0) - Prevents race conditions between polling and commands
+        self._connection_lock = asyncio.Lock()
+        self._last_operation = None  # Timestamp of last operation for minimum spacing
+
         # Set unique ID
         self._attr_unique_id = f"lexicon_av_{protocol._host}"
         self._attr_device_info = {
@@ -151,6 +155,57 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             self._async_polling_update,
             timedelta(seconds=interval),
         )
+
+    async def _execute_with_connection(self, operation_func, operation_name: str):
+        """Central connection manager with lock (v1.7.0).
+        
+        Ensures:
+        - Only one operation at a time (Lock prevents race conditions)
+        - Minimum 100ms spacing between operations
+        - Clean connect/disconnect lifecycle
+        - Proper error handling with logging
+        
+        Args:
+            operation_func: Async function to execute (lambda or method)
+            operation_name: Name for logging purposes (e.g. "turn_on", "volume_up")
+            
+        Returns:
+            Result from operation_func, or None on error
+        """
+        _LOGGER.debug("[v1.7.0] Waiting for connection lock: %s", operation_name)
+        
+        async with self._connection_lock:
+            _LOGGER.debug("[v1.7.0] Lock acquired: %s", operation_name)
+            
+            try:
+                # Ensure minimum spacing between operations
+                if self._last_operation:
+                    elapsed = (datetime.now() - self._last_operation).total_seconds()
+                    if elapsed < 0.1:
+                        wait_time = 0.1 - elapsed
+                        _LOGGER.debug("[v1.7.0] Spacing: waiting %.3fs before %s", wait_time, operation_name)
+                        await asyncio.sleep(wait_time)
+                
+                # Connect
+                if not await self._protocol.connect():
+                    _LOGGER.error("[v1.7.0] Could not connect for %s", operation_name)
+                    return None
+                
+                try:
+                    # Execute operation
+                    _LOGGER.debug("[v1.7.0] Executing: %s", operation_name)
+                    result = await operation_func()
+                    _LOGGER.debug("[v1.7.0] Completed: %s (result=%s)", operation_name, result)
+                    return result
+                finally:
+                    # Always disconnect
+                    await self._protocol.disconnect()
+                    self._last_operation = datetime.now()
+                    _LOGGER.debug("[v1.7.0] Lock released: %s", operation_name)
+                    
+            except Exception as e:
+                _LOGGER.error("[v1.7.0] Error in %s: %s", operation_name, e, exc_info=True)
+                return None
 
     async def async_will_remove_from_hass(self) -> None:
         """Run when entity will be removed from hass."""
@@ -422,12 +477,8 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         """Turn the media player on."""
         _LOGGER.info("Turning ON Lexicon (via power toggle)")
         
-        # Connect for this command
-        if not await self._protocol.connect():
-            _LOGGER.error("Could not connect to send power ON command")
-            return
-        
-        try:
+        async def do_power_on():
+            """Inner function: actual power on logic."""
             # Set 8s boot timer and optimistic state
             self._power_transition_until = datetime.now() + timedelta(seconds=8)
             self._state = MediaPlayerState.ON
@@ -440,25 +491,26 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 # Schedule poll in 9s (after 8s boot timer + 1s margin) to set ready flag
                 async_call_later(self.hass, 9, self._trigger_poll_after_boot)
                 _LOGGER.debug("Scheduled poll in 9s to update ready flag")
+                return True
             else:
                 self._state = MediaPlayerState.OFF
                 self._ready = False
                 self._power_transition_until = None
                 self.async_write_ha_state()
                 _LOGGER.error("Failed to turn ON - check connection and RS232 Control setting")
-        finally:
-            await self._protocol.disconnect()
+                return False
+        
+        # Use lock-protected connection manager (v1.7.0)
+        result = await self._execute_with_connection(do_power_on, "turn_on")
+        if not result:
+            _LOGGER.error("Power ON failed")
 
     async def async_turn_off(self) -> None:
         """Turn the media player off."""
         _LOGGER.info("Turning OFF Lexicon (via power toggle)")
         
-        # Connect for this command
-        if not await self._protocol.connect():
-            _LOGGER.error("Could not connect to send power OFF command")
-            return
-        
-        try:
+        async def do_power_off():
+            """Inner function: actual power off logic."""
             # Set power transition lock for 5 seconds (OFF is faster than ON)
             self._power_transition_until = datetime.now() + timedelta(seconds=5)
             
@@ -469,26 +521,22 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 self._current_source = None
                 self.async_write_ha_state()
                 _LOGGER.info("Lexicon turned OFF successfully")
+                return True
             else:
                 # If command failed, clear lock
                 self._power_transition_until = None
                 _LOGGER.error("Failed to turn OFF - check connection and RS232 Control setting")
-        finally:
-            await self._protocol.disconnect()
+                return False
+        
+        # Use lock-protected connection manager (v1.7.0)
+        result = await self._execute_with_connection(do_power_off, "turn_off")
+        if not result:
+            _LOGGER.error("Power OFF failed")
 
     async def async_volume_up(self) -> None:
         """Volume up the media player."""
-        connected = await self._protocol.connect()
-        if not connected:
-            _LOGGER.warning("Could not connect for volume up, retrying after 500ms...")
-            await asyncio.sleep(0.5)
-            connected = await self._protocol.connect()
-        
-        if not connected:
-            _LOGGER.error("Could not connect for volume up (after retry)")
-            return
-        
-        try:
+        async def do_volume_up():
+            """Inner function: actual volume up logic."""
             if await self._protocol.volume_up():
                 # Query new volume after short delay
                 await asyncio.sleep(0.3)
@@ -496,22 +544,16 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 if volume is not None:
                     self._volume_level = round(volume / 99.0, 2)
                     self.async_write_ha_state()
-        finally:
-            await self._protocol.disconnect()
+                return True
+            return False
+        
+        # Use lock-protected connection manager (v1.7.0) - NO RETRY NEEDED!
+        await self._execute_with_connection(do_volume_up, "volume_up")
 
     async def async_volume_down(self) -> None:
         """Volume down the media player."""
-        connected = await self._protocol.connect()
-        if not connected:
-            _LOGGER.warning("Could not connect for volume down, retrying after 500ms...")
-            await asyncio.sleep(0.5)
-            connected = await self._protocol.connect()
-        
-        if not connected:
-            _LOGGER.error("Could not connect for volume down (after retry)")
-            return
-        
-        try:
+        async def do_volume_down():
+            """Inner function: actual volume down logic."""
             if await self._protocol.volume_down():
                 # Query new volume after short delay
                 await asyncio.sleep(0.3)
@@ -519,22 +561,16 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 if volume is not None:
                     self._volume_level = round(volume / 99.0, 2)
                     self.async_write_ha_state()
-        finally:
-            await self._protocol.disconnect()
+                return True
+            return False
+        
+        # Use lock-protected connection manager (v1.7.0) - NO RETRY NEEDED!
+        await self._execute_with_connection(do_volume_down, "volume_down")
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level, range 0..1."""
-        connected = await self._protocol.connect()
-        if not connected:
-            _LOGGER.warning("Could not connect to set volume, retrying after 500ms...")
-            await asyncio.sleep(0.5)
-            connected = await self._protocol.connect()
-        
-        if not connected:
-            _LOGGER.error("Could not connect to set volume (after retry)")
-            return
-        
-        try:
+        async def do_set_volume():
+            """Inner function: actual set volume logic."""
             # Convert 0.0-1.0 to 0-99
             lexicon_volume = int(volume * 99)
             _LOGGER.debug("Setting volume to %d (%.2f)", lexicon_volume, volume)
@@ -543,24 +579,18 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 self._volume_level = round(volume, 2)
                 self.async_write_ha_state()
                 _LOGGER.info("Volume set to %d", lexicon_volume)
+                return True
             else:
                 _LOGGER.error("Failed to set volume")
-        finally:
-            await self._protocol.disconnect()
+                return False
+        
+        # Use lock-protected connection manager (v1.7.0) - NO RETRY NEEDED!
+        await self._execute_with_connection(do_set_volume, "set_volume")
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute the volume."""
-        connected = await self._protocol.connect()
-        if not connected:
-            _LOGGER.warning("Could not connect to toggle mute, retrying after 500ms...")
-            await asyncio.sleep(0.5)
-            connected = await self._protocol.connect()
-        
-        if not connected:
-            _LOGGER.error("Could not connect to toggle mute (after retry)")
-            return
-        
-        try:
+        async def do_mute():
+            """Inner function: actual mute logic."""
             if mute:
                 if await self._protocol.mute_on():
                     self._is_volume_muted = True
@@ -568,12 +598,14 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 if await self._protocol.mute_off():
                     self._is_volume_muted = False
             self.async_write_ha_state()
-        finally:
-            await self._protocol.disconnect()
+            return True
+        
+        # Use lock-protected connection manager (v1.7.0) - NO RETRY NEEDED!
+        await self._execute_with_connection(do_mute, "mute_volume")
 
     async def async_select_source(self, source: str) -> None:
         """Select input source."""
-        # Parse source string - could be "Custom (PHYSICAL)" or just "PHYSICAL"
+        # STEP 1: Parse source string (BEFORE lock - no connection needed)
         physical_input = None
         
         # Check if format is "Custom (PHYSICAL)"
@@ -591,45 +623,40 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             _LOGGER.error("Unknown source: %s (available: %s)", source, self._source_list)
             return
         
-        # Get the RC5 code for this physical input
-        if physical_input in LEXICON_INPUTS:
-            input_code = LEXICON_INPUTS[physical_input]
-            _LOGGER.debug("Selecting source %s (physical: %s, code: 0x%02X)", source, physical_input, input_code)
-            
-            # Connect for this command (with retry for race conditions)
-            connected = await self._protocol.connect()
-            if not connected:
-                _LOGGER.warning("Could not connect to select source, retrying after 500ms...")
-                await asyncio.sleep(0.5)
-                connected = await self._protocol.connect()
-            
-            if not connected:
-                _LOGGER.error("Could not connect to select source (after retry)")
-                return
-            
-            try:
-                if await self._protocol.select_input(input_code):
-                    # Wait a moment for receiver to process input change
-                    await asyncio.sleep(1)
-                    
-                    # Query new source immediately and update with correct format
-                    new_source = await self._protocol.get_current_source()
-                    if new_source:
-                        if new_source in self._physical_to_name:
-                            custom_name = self._physical_to_name[new_source]
-                            self._current_source = f"{custom_name} ({new_source})"
-                        else:
-                            self._current_source = new_source
-                    else:
-                        # Assume source changed even if we can't verify
-                        self._current_source = source
-                    
-                    self.async_write_ha_state()
-                    _LOGGER.info("Source selected: %s", source)
-            finally:
-                await self._protocol.disconnect()
-        else:
+        # STEP 2: Validate and get RC5 code (BEFORE lock - no connection needed)
+        if physical_input not in LEXICON_INPUTS:
             _LOGGER.error("Physical input %s not found in LEXICON_INPUTS", physical_input)
+            return
+        
+        input_code = LEXICON_INPUTS[physical_input]
+        _LOGGER.debug("Selecting source %s (physical: %s, code: 0x%02X)", source, physical_input, input_code)
+        
+        # STEP 3: Execute command with lock (connection required)
+        async def do_select_source():
+            """Inner function: actual source selection logic."""
+            if await self._protocol.select_input(input_code):
+                # Wait a moment for receiver to process input change
+                await asyncio.sleep(1)
+                
+                # Query new source immediately and update with correct format
+                new_source = await self._protocol.get_current_source()
+                if new_source:
+                    if new_source in self._physical_to_name:
+                        custom_name = self._physical_to_name[new_source]
+                        self._current_source = f"{custom_name} ({new_source})"
+                    else:
+                        self._current_source = new_source
+                else:
+                    # Assume source changed even if we can't verify
+                    self._current_source = source
+                
+                self.async_write_ha_state()
+                _LOGGER.info("Source selected: %s", source)
+                return True
+            return False
+        
+        # Use lock-protected connection manager (v1.7.0) - NO RETRY NEEDED!
+        await self._execute_with_connection(do_select_source, "select_source")
 
     async def async_update(self) -> None:
         """Update the media player state (not used - we poll via timer)."""
