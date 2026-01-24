@@ -1,6 +1,10 @@
 # Changelog
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
+## [1.6.2] - 2025-01-24
+
+Fixes for the Power ON process.
+After powering ON, automatically wait 8s before setting the 'ready' flag to true and allowing input switching.
 
 ## [1.6.0] - 2025-01-21
 
