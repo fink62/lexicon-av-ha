@@ -165,6 +165,11 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         await self._protocol.disconnect()
         _LOGGER.info("Entity removed, connection closed")
 
+    def _trigger_poll_after_boot(self, _=None):
+        """Trigger poll after boot (safe callback for async_call_later)."""
+        # Use add_job to safely schedule async task from timer callback
+        self.hass.add_job(self._async_polling_update())
+
     async def _async_polling_update(self, now=None) -> None:
         """Periodic status update (called by timer)."""
         self._poll_count += 1
@@ -433,7 +438,7 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             if await self._protocol.power_on():
                 _LOGGER.info("Power ON command sent successfully")
                 # Schedule poll in 9s (after 8s boot timer + 1s margin) to set ready flag
-                async_call_later(self.hass, 9, lambda _: self.hass.async_create_task(self._async_polling_update()))
+                async_call_later(self.hass, 9, self._trigger_poll_after_boot)
                 _LOGGER.debug("Scheduled poll in 9s to update ready flag")
             else:
                 self._state = MediaPlayerState.OFF
@@ -473,8 +478,14 @@ class LexiconMediaPlayer(MediaPlayerEntity):
 
     async def async_volume_up(self) -> None:
         """Volume up the media player."""
-        if not await self._protocol.connect():
-            _LOGGER.error("Could not connect for volume up")
+        connected = await self._protocol.connect()
+        if not connected:
+            _LOGGER.warning("Could not connect for volume up, retrying after 500ms...")
+            await asyncio.sleep(0.5)
+            connected = await self._protocol.connect()
+        
+        if not connected:
+            _LOGGER.error("Could not connect for volume up (after retry)")
             return
         
         try:
@@ -490,8 +501,14 @@ class LexiconMediaPlayer(MediaPlayerEntity):
 
     async def async_volume_down(self) -> None:
         """Volume down the media player."""
-        if not await self._protocol.connect():
-            _LOGGER.error("Could not connect for volume down")
+        connected = await self._protocol.connect()
+        if not connected:
+            _LOGGER.warning("Could not connect for volume down, retrying after 500ms...")
+            await asyncio.sleep(0.5)
+            connected = await self._protocol.connect()
+        
+        if not connected:
+            _LOGGER.error("Could not connect for volume down (after retry)")
             return
         
         try:
@@ -507,8 +524,14 @@ class LexiconMediaPlayer(MediaPlayerEntity):
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level, range 0..1."""
-        if not await self._protocol.connect():
-            _LOGGER.error("Could not connect to set volume")
+        connected = await self._protocol.connect()
+        if not connected:
+            _LOGGER.warning("Could not connect to set volume, retrying after 500ms...")
+            await asyncio.sleep(0.5)
+            connected = await self._protocol.connect()
+        
+        if not connected:
+            _LOGGER.error("Could not connect to set volume (after retry)")
             return
         
         try:
@@ -527,8 +550,14 @@ class LexiconMediaPlayer(MediaPlayerEntity):
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Mute the volume."""
-        if not await self._protocol.connect():
-            _LOGGER.error("Could not connect to toggle mute")
+        connected = await self._protocol.connect()
+        if not connected:
+            _LOGGER.warning("Could not connect to toggle mute, retrying after 500ms...")
+            await asyncio.sleep(0.5)
+            connected = await self._protocol.connect()
+        
+        if not connected:
+            _LOGGER.error("Could not connect to toggle mute (after retry)")
             return
         
         try:
@@ -567,9 +596,15 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             input_code = LEXICON_INPUTS[physical_input]
             _LOGGER.debug("Selecting source %s (physical: %s, code: 0x%02X)", source, physical_input, input_code)
             
-            # Connect for this command
-            if not await self._protocol.connect():
-                _LOGGER.error("Could not connect to select source")
+            # Connect for this command (with retry for race conditions)
+            connected = await self._protocol.connect()
+            if not connected:
+                _LOGGER.warning("Could not connect to select source, retrying after 500ms...")
+                await asyncio.sleep(0.5)
+                connected = await self._protocol.connect()
+            
+            if not connected:
+                _LOGGER.error("Could not connect to select source (after retry)")
                 return
             
             try:
