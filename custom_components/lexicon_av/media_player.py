@@ -12,7 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_time_interval, async_call_later
 
 from .const import (
     DOMAIN,
@@ -432,6 +432,9 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             
             if await self._protocol.power_on():
                 _LOGGER.info("Power ON command sent successfully")
+                # Schedule poll in 9s (after 8s boot timer + 1s margin) to set ready flag
+                async_call_later(self.hass, 9, lambda _: self.hass.async_create_task(self._async_polling_update()))
+                _LOGGER.debug("Scheduled poll in 9s to update ready flag")
             else:
                 self._state = MediaPlayerState.OFF
                 self._ready = False
