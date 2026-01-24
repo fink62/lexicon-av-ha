@@ -198,19 +198,16 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             # Track if ANY query succeeded (for cache timestamp)
             queries_succeeded = False
             
-            # STEP 1: Query power state FIRST
+            # STEP 1: Query power state (with boot protection)
             power_state = None
             if self._power_transition_until and datetime.now() < self._power_transition_until:
-                # In transition - use optimistic state
+                # During boot transition: use optimistic state (don't query, receiver is booting!)
                 power_state = (self._state == MediaPlayerState.ON)
-                _LOGGER.debug("Power transition active, using optimistic state: %s", power_state)
+                remaining = (self._power_transition_until - datetime.now()).total_seconds()
+                _LOGGER.debug("Boot transition active (%.1fs remaining), using optimistic state: %s", 
+                            remaining, power_state)
             else:
-                # Clear expired lock
-                if self._power_transition_until:
-                    _LOGGER.info("Power transition lock expired")
-                    self._power_transition_until = None
-                
-                # Query actual power
+                # Normal operation: query actual power state
                 power_state = await self._protocol.get_power_state()
                 _LOGGER.debug("Power query result: %s", power_state)
             
@@ -247,9 +244,16 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             if power_state is not None:
                 # Trust power query
                 if power_state:
+                    # Detect OFF → ON transition for relay timing
+                    if self._state == MediaPlayerState.OFF:
+                        _LOGGER.info("🔌 State changed: OFF → ON (relay will click in ~6s, waiting 8s total)")
+                        self._power_transition_until = datetime.now() + timedelta(seconds=8)
+                        self._ready = False
                     self._state = MediaPlayerState.ON
                 else:
                     self._state = MediaPlayerState.OFF
+                    self._ready = False
+                    self._power_transition_until = None
                     # Only clear audio when transitioning to OFF
                     self._audio_format = None
                     self._decode_mode = None
@@ -293,9 +297,19 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             
             # STEP 5: Set ready status
             if self._state == MediaPlayerState.ON and (volume is not None or source is not None):
-                if not self._ready:
-                    _LOGGER.info("✅ Receiver is READY")
-                self._ready = True
+                # Check if waiting for relay click (8s after State=ON)
+                if self._power_transition_until and datetime.now() < self._power_transition_until:
+                    elapsed = (datetime.now() - (self._power_transition_until - timedelta(seconds=8))).total_seconds()
+                    remaining = (self._power_transition_until - datetime.now()).total_seconds()
+                    _LOGGER.info("⏳ Boot sequence: %.1fs elapsed, relay in ~%.1fs (%.1fs until ready)", 
+                                elapsed, max(0, 6.0 - elapsed), remaining)
+                    self._ready = False
+                else:
+                    # Boot period complete
+                    if not self._ready:
+                        _LOGGER.info("✅ Receiver READY - relay clicked, input switching available")
+                    self._ready = True
+                    self._power_transition_until = None  # Clear transition timer
             else:
                 if self._ready:
                     _LOGGER.info("❌ Receiver is NOT READY")
@@ -409,21 +423,19 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             return
         
         try:
-            # Set power transition lock for 10 seconds
-            self._power_transition_until = datetime.now() + timedelta(seconds=10)
-            self._state = MediaPlayerState.ON  # Optimistically set to ON
-            self._ready = False  # Not ready yet
+            # Set 8s boot timer and optimistic state
+            self._power_transition_until = datetime.now() + timedelta(seconds=8)
+            self._state = MediaPlayerState.ON
+            self._ready = False
             self.async_write_ha_state()
+            _LOGGER.debug("Boot timer set for 8 seconds, optimistic state=ON")
             
             if await self._protocol.power_on():
-                _LOGGER.info("Lexicon power ON command sent, waiting for receiver to boot")
-                # DON'T query status immediately - receiver needs time to boot
-                # Polling will update ready status once receiver responds
+                _LOGGER.info("Power ON command sent successfully")
             else:
-                # If command failed, clear lock and revert
-                self._power_transition_until = None
                 self._state = MediaPlayerState.OFF
                 self._ready = False
+                self._power_transition_until = None
                 self.async_write_ha_state()
                 _LOGGER.error("Failed to turn ON - check connection and RS232 Control setting")
         finally:
