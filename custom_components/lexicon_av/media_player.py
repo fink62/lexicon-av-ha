@@ -123,37 +123,15 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         }
 
     async def async_added_to_hass(self) -> None:
-        """Run when entity is added to hass - start polling (connection per poll cycle)."""
+        """Run when entity is added to hass - start polling."""
         await super().async_added_to_hass()
         
-        # Start adaptive polling (connection will be established per poll cycle)
-        _LOGGER.info("Starting adaptive status polling (connect/disconnect per cycle)")
-        await self._schedule_next_poll()
-
-    async def _schedule_next_poll(self):
-        """Schedule next poll with adaptive interval based on device state."""
-        # Determine interval based on state
-        if self._poll_count < 3:
-            # First few polls: faster for quick startup
-            interval = SCAN_INTERVAL_STARTUP
-        elif self._state == MediaPlayerState.ON:
-            # Device is on: poll frequently
-            interval = SCAN_INTERVAL_ON
-        else:
-            # Device is off: poll less frequently to save resources
-            interval = SCAN_INTERVAL_OFF
-        
-        _LOGGER.debug("Scheduling next poll in %d seconds (state: %s)", interval, self._state)
-        
-        # Cancel existing timer if any
-        if self._cancel_polling:
-            self._cancel_polling()
-        
-        # Schedule new poll
+        # Start fixed 30s polling (connection per poll cycle)
+        _LOGGER.info("Starting status polling every 30s (connect/disconnect per cycle)")
         self._cancel_polling = async_track_time_interval(
             self.hass,
             self._async_polling_update,
-            timedelta(seconds=interval),
+            timedelta(seconds=30),
         )
 
     async def _execute_with_connection(self, operation_func, operation_name: str):
@@ -236,8 +214,9 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         # Update status
         await self._async_update_status()
         
-        # Schedule next poll using adaptive interval
-        await self._schedule_next_poll()
+        # Note: Do NOT call _schedule_next_poll() here!
+        # async_track_time_interval already handles repetition.
+        # Calling _schedule_next_poll() would create duplicate timers (timer leak)!
 
     async def _async_update_status(self) -> None:
         """Query receiver status and update entity state with value caching."""
