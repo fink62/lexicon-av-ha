@@ -30,6 +30,8 @@ Temporary Items
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
 
 # C extensions
 *.so
@@ -113,6 +115,8 @@ dmypy.json
 *.elc
 
 # ===== Home Assistant Specific =====
+.storage/
+
 # Secrets (CRITICAL - never commit!)
 secrets.yaml
 secrets.yml
