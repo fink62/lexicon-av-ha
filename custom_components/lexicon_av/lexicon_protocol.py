@@ -259,7 +259,10 @@ class LexiconProtocol:
             response = await self._read_frame()
             if not response:
                 _LOGGER.warning("No query response received")
-                self._connected = False
+                # NOTE: Do NOT set _connected = False here!
+                # Connection is still valid, receiver just didn't respond
+                # (e.g. OFF, booting, or busy). Setting False here causes
+                # unnecessary reconnects for every query in a poll cycle.
                 return None
 
             # Parse response: <Start> <Zone> <Cmd> <Answer> <DataLen> <Data...> <End>
