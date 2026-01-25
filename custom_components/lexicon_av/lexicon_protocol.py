@@ -331,26 +331,24 @@ class LexiconProtocol:
     # ==================== Control Commands ====================
 
     async def power_on(self) -> bool:
-        """Turn on the receiver (using power toggle) and wait for readiness."""
+        """Turn on the receiver (using power toggle).
+
+        Sends the power toggle command and returns immediately.
+        The media player entity will verify power state through
+        scheduled polling to avoid holding the connection.
+
+        Returns:
+            True if command was sent successfully, False on error
+        """
         command = self._build_command(RC5_POWER_TOGGLE)
-        if not await self._send_command(command):
-            return False
-        
-        # Wait a moment for receiver to start powering on
-        await asyncio.sleep(2)
-        
-        # Verify receiver is actually on (up to 5 attempts over 5 seconds)
-        for attempt in range(5):
-            power_state = await self.get_power_state()
-            if power_state is True:
-                _LOGGER.info("Receiver powered on and verified ready")
-                return True
-            _LOGGER.debug("Waiting for receiver to power on (attempt %d/5)", attempt + 1)
-            await asyncio.sleep(1)
-        
-        # Assume success even if we can't verify (receiver might not support query while booting)
-        _LOGGER.warning("Could not verify power on state, assuming success")
-        return True
+        result = await self._send_command(command)
+
+        if result:
+            _LOGGER.info("Power ON command sent, polling will verify state")
+        else:
+            _LOGGER.error("Failed to send power ON command")
+
+        return result
 
     async def power_off(self) -> bool:
         """Turn off the receiver (using power toggle)."""

@@ -1,0 +1,77 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags like v1.7.2
+
+permissions:
+  contents: write  # Required to create releases
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION_NUMBER=${VERSION#v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_number=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
+
+      - name: Verify version matches manifest.json
+        run: |
+          MANIFEST_VERSION=$(grep '"version"' custom_components/lexicon_av/manifest.json | sed 's/.*: "\(.*\)".*/\1/')
+          if [ "$MANIFEST_VERSION" != "${{ steps.version.outputs.version_number }}" ]; then
+            echo "ERROR: Tag version (${{ steps.version.outputs.version_number }}) doesn't match manifest.json ($MANIFEST_VERSION)"
+            exit 1
+          fi
+
+      - name: Extract release notes
+        id: release_notes
+        run: |
+          # Check if release notes file exists
+          if [ -f "RELEASE_NOTES_${{ steps.version.outputs.version }}.md" ]; then
+            echo "notes_file=RELEASE_NOTES_${{ steps.version.outputs.version }}.md" >> $GITHUB_OUTPUT
+          elif [ -f "RELEASE_NOTES_v${{ steps.version.outputs.version_number }}.md" ]; then
+            echo "notes_file=RELEASE_NOTES_v${{ steps.version.outputs.version_number }}.md" >> $GITHUB_OUTPUT
+          else
+            # Extract from CHANGELOG.md
+            echo "Extracting release notes from CHANGELOG.md"
+            sed -n "/## \[${{ steps.version.outputs.version_number }}\]/,/^## \[/p" CHANGELOG.md | sed '$d' > /tmp/release_notes.md
+            echo "notes_file=/tmp/release_notes.md" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release archive
+        run: |
+          cd custom_components
+          zip -r "../lexicon-av-${{ steps.version.outputs.version }}.zip" \
+            lexicon_av/ \
+            -x "*.pyc" \
+            -x "__pycache__/*" \
+            -x ".DS_Store" \
+            -x "*.git*"
+          cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Lexicon AV Integration ${{ steps.version.outputs.version }}
+          body_path: ${{ steps.release_notes.outputs.notes_file }}
+          files: |
+            lexicon-av-${{ steps.version.outputs.version }}.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update HACS metadata (optional)
+        run: |
+          echo "Release ${{ steps.version.outputs.version }} created successfully!"
+          echo "Users can now install via HACS or download the zip file"

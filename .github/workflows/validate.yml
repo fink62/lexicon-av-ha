@@ -1,0 +1,103 @@
+name: Validate
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  validate:
+    name: Validate Integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Home Assistant dependencies
+        run: |
+          pip install homeassistant
+          pip install voluptuous
+
+      - name: Validate manifest.json
+        run: |
+          python3 -c "
+          import json
+          import sys
+
+          with open('custom_components/lexicon_av/manifest.json') as f:
+              manifest = json.load(f)
+
+          # Check required fields
+          required = ['domain', 'name', 'version', 'documentation', 'codeowners']
+          for field in required:
+              if field not in manifest:
+                  print(f'ERROR: Missing required field: {field}')
+                  sys.exit(1)
+
+          # Validate version format
+          version = manifest['version']
+          if not all(part.isdigit() for part in version.split('.')):
+              print(f'ERROR: Invalid version format: {version}')
+              sys.exit(1)
+
+          print(f'✅ Manifest valid - Version: {version}')
+          "
+
+      - name: Check Python syntax
+        run: |
+          python3 -m py_compile custom_components/lexicon_av/*.py
+
+      - name: Validate translations
+        run: |
+          python3 -c "
+          import json
+          import sys
+
+          try:
+              with open('custom_components/lexicon_av/translations/en.json') as f:
+                  translations = json.load(f)
+              print('✅ Translations valid')
+          except json.JSONDecodeError as e:
+              print(f'ERROR: Invalid JSON in translations: {e}')
+              sys.exit(1)
+          "
+
+      - name: Check file structure
+        run: |
+          required_files=(
+            "custom_components/lexicon_av/__init__.py"
+            "custom_components/lexicon_av/manifest.json"
+            "custom_components/lexicon_av/const.py"
+            "custom_components/lexicon_av/config_flow.py"
+            "custom_components/lexicon_av/media_player.py"
+            "custom_components/lexicon_av/lexicon_protocol.py"
+            "custom_components/lexicon_av/translations/en.json"
+            "README.md"
+            "LICENSE"
+          )
+
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ Missing required file: $file"
+              exit 1
+            fi
+          done
+
+          echo "✅ All required files present"
+
+      - name: Check CHANGELOG updated
+        if: github.event_name == 'pull_request'
+        run: |
+          if ! git diff origin/main -- CHANGELOG.md | grep -q "^+"; then
+            echo "⚠️ WARNING: CHANGELOG.md was not updated"
+            echo "Consider adding an entry for your changes"
+          else
+            echo "✅ CHANGELOG.md updated"
+          fi

@@ -320,8 +320,8 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                     if power_state:
                         # Detect OFF → ON transition for relay timing
                         if self._state == MediaPlayerState.OFF:
-                            _LOGGER.info("🔌 State changed: OFF → ON (relay will click in ~6s, waiting 8s total)")
-                            self._power_transition_until = datetime.now() + timedelta(seconds=8)
+                            _LOGGER.info("🔌 State changed: OFF → ON (relay clicks at ~6s, stabilization buffer until 10s)")
+                            self._power_transition_until = datetime.now() + timedelta(seconds=10)
                             self._ready = False
                         self._state = MediaPlayerState.ON
                     else:
@@ -369,21 +369,22 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                         queries_succeeded = True
                     # else: keep old _direct_mode
             
-                # STEP 5: Set ready status
+                # STEP 5: Set ready status with comprehensive stability check
                 if self._state == MediaPlayerState.ON and (volume is not None or source is not None):
-                    # Check if waiting for relay click (8s after State=ON)
-                    if self._power_transition_until and datetime.now() < self._power_transition_until:
-                        elapsed = (datetime.now() - (self._power_transition_until - timedelta(seconds=8))).total_seconds()
-                        remaining = (self._power_transition_until - datetime.now()).total_seconds()
-                        _LOGGER.info("⏳ Boot sequence: %.1fs elapsed, relay in ~%.1fs (%.1fs until ready)", 
-                                    elapsed, max(0, 6.0 - elapsed), remaining)
-                        self._ready = False
-                    else:
-                        # Boot period complete
+                    # Use comprehensive stability check
+                    if self._verify_receiver_stable():
                         if not self._ready:
-                            _LOGGER.info("✅ Receiver READY - relay clicked, input switching available")
+                            _LOGGER.info("✅ Receiver READY and STABLE - input switching available")
                         self._ready = True
                         self._power_transition_until = None  # Clear transition timer
+                    else:
+                        # Still in boot/stabilization phase
+                        if self._power_transition_until:
+                            elapsed = (datetime.now() - (self._power_transition_until - timedelta(seconds=10))).total_seconds()
+                            remaining = (self._power_transition_until - datetime.now()).total_seconds()
+                            _LOGGER.info("⏳ Boot sequence: %.1fs elapsed, relay at ~6s, stabilizing (%.1fs until ready)",
+                                        elapsed, remaining)
+                        self._ready = False
                 else:
                     if self._ready:
                         _LOGGER.info("❌ Receiver is NOT READY")
@@ -415,6 +416,38 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 await self._protocol.disconnect()
                 self._last_operation = datetime.now()
                 _LOGGER.debug("[v1.7.0] Lock released: polling_update")
+
+    def _verify_receiver_stable(self) -> bool:
+        """Verify receiver is in stable operational state.
+
+        Checks multiple parameters to ensure receiver is ready
+        for input switching and other commands.
+
+        Returns:
+            True if receiver is stable and ready, False otherwise
+        """
+        if self._state != MediaPlayerState.ON:
+            return False
+
+        if self._power_transition_until and datetime.now() < self._power_transition_until:
+            # Still in boot sequence
+            return False
+
+        # Check relay click timing (should be at least 9s after boot start)
+        # This ensures: 6s for relay click + 3s stabilization buffer
+        if self._power_transition_until:
+            boot_start = self._power_transition_until - timedelta(seconds=10)
+            time_since_boot = (datetime.now() - boot_start).total_seconds()
+            if time_since_boot < 9:  # 6s relay + 3s stabilization
+                _LOGGER.debug("Receiver not stable: only %.1fs since boot (need 9s minimum)", time_since_boot)
+                return False
+
+        # Verify we can query receiver successfully (have current data)
+        if not self._current_source or self._volume_level is None:
+            _LOGGER.debug("Receiver not stable: missing source or volume data")
+            return False
+
+        return True
 
     @property
     def supported_features(self) -> MediaPlayerEntityFeature:
@@ -495,18 +528,18 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         
         async def do_power_on():
             """Inner function: actual power on logic."""
-            # Set 8s boot timer and optimistic state
-            self._power_transition_until = datetime.now() + timedelta(seconds=8)
+            # Set 10s boot timer and optimistic state (relay clicks at ~6s, need stabilization)
+            self._power_transition_until = datetime.now() + timedelta(seconds=10)
             self._state = MediaPlayerState.ON
             self._ready = False
             self.async_write_ha_state()
-            _LOGGER.debug("Boot timer set for 8 seconds, optimistic state=ON")
-            
+            _LOGGER.debug("Boot timer set for 10 seconds, optimistic state=ON")
+
             if await self._protocol.power_on():
                 _LOGGER.info("Power ON command sent successfully")
-                # Schedule poll in 9s (after 8s boot timer + 1s margin) to set ready flag
-                async_call_later(self.hass, 9, self._trigger_poll_after_boot)
-                _LOGGER.debug("Scheduled poll in 9s to update ready flag")
+                # Schedule poll in 11s (after 10s boot timer + 1s margin) to set ready flag
+                async_call_later(self.hass, 11, self._trigger_poll_after_boot)
+                _LOGGER.debug("Scheduled poll in 11s to update ready flag")
                 return True
             else:
                 self._state = MediaPlayerState.OFF

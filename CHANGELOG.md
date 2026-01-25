@@ -2,6 +2,170 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.7.2] - 2026-01-25
+
+### 🐛 Critical Bugfix - Boot Timing and Connection Management
+
+**Fixed two critical timing issues reported from production use.**
+
+### Issue 1: Input Switching Fails When ready=true
+
+**Problem:**
+- Boot timeout was only 8 seconds (2s after relay click at ~6s)
+- Insufficient stabilization time after relay click
+- Users' scripts would see `ready=true` but input switching still failed
+- Later manual attempts worked fine (receiver had more time to stabilize)
+
+**Root Cause:**
+- Relay clicks at T=6s (physical hardware event)
+- Boot timeout expired at T=8s
+- Ready flag set immediately when timeout expired
+- **Only 2s stabilization buffer** - not enough for reliable input switching
+
+**Solution:**
+- Increased boot timeout from **8s → 10s** (4s stabilization buffer)
+- Increased scheduled poll from **9s → 11s** (ensures poll runs after timeout)
+- Added **comprehensive stability check** (`_verify_receiver_stable()`)
+- Verifies 9s minimum since boot (6s relay + 3s stabilization)
+- Checks data availability (volume, source) before declaring ready
+
+**Timeline (v1.7.2):**
+```
+T=0s    Power ON command sent
+T=6s    🔌 Relay clicks (hardware)
+T=10s   Boot timeout expires
+T=11s   📊 Scheduled poll runs
+        └─> Stability check: 11s > 9s ✅
+        └─> Data available ✅
+        └─> ready=True 🎉
+T=11.5s User script proceeds with input switching
+        └─> SUCCESS! ✅
+```
+
+### Issue 2: Power ON Fails After 2-3 Script Runs
+
+**Problem:**
+- After running power-on scripts 2-3 times, power ON command fails
+- Error: "Could not connect"
+- User had to wait before it worked again
+
+**Root Cause:**
+- `power_on()` method held TCP connection for **2-7 seconds**
+- Initial 2s sleep + verification loop (5 attempts × 1s)
+- Violated "connect per operation" design pattern
+- Exhausted receiver's TCP connection pool after multiple rapid attempts
+- Receiver couldn't clean up connections fast enough
+
+**Solution:**
+- **Removed verification loop** from `power_on()` entirely
+- Method now returns immediately after sending command
+- Let scheduled polling verify power state naturally
+- Eliminates 2-7s connection hold
+- Follows proper "connect → execute → disconnect" pattern
+
+**Before (v1.7.1):**
+```python
+async def power_on(self):
+    send_command()
+    await asyncio.sleep(2)  # Holding connection!
+    for i in range(5):      # Holding connection!
+        verify_power()
+        await asyncio.sleep(1)
+    # Total: 2-7s connection hold
+```
+
+**After (v1.7.2):**
+```python
+async def power_on(self):
+    result = send_command()
+    return result  # Return immediately!
+    # Connection released in <100ms
+```
+
+### Changed
+
+**Files Modified:**
+- `media_player.py`: Boot timeout, scheduled poll timing, stability check
+- `lexicon_protocol.py`: Simplified `power_on()` method
+
+**Specific Changes:**
+1. **Boot Timeout**: 8s → 10s (line 499, 324)
+2. **Scheduled Poll**: 9s → 11s (line 508)
+3. **Stability Check**: Added `_verify_receiver_stable()` method (line 419)
+4. **Ready Logic**: Uses comprehensive stability check (line 374)
+5. **Power ON**: Removed verification loop, return immediately (lexicon_protocol.py line 333)
+6. **Logging**: Updated messages for accuracy
+
+### Impact
+
+**v1.7.1 users - UPGRADE IMMEDIATELY:**
+- Input switching now reliable when `ready=true`
+- Power ON works consistently on 3rd+ attempt
+- No more premature "receiver ready" declarations
+- No connection pool exhaustion
+
+**Migration:**
+- Drop-in replacement (no config changes)
+- Scripts using `wait_template` for ready flag will now work correctly
+- Expect **11-12s** boot time instead of 9-10s (extra 2s for safety)
+
+### Testing Recommendations
+
+1. **Test repeated power cycles:**
+   ```yaml
+   # Run this script 5 times in a row
+   - service: media_player.turn_on
+     entity_id: media_player.lexicon_av
+   - wait_template: "{{ is_state_attr('media_player.lexicon_av', 'ready', true) }}"
+     timeout: 15
+   - service: media_player.select_source
+     data:
+       source: "Your Source"
+   ```
+
+2. **Verify timing in logs:**
+   ```
+   ✅ Should see:
+   - "Boot timer set for 10 seconds"
+   - "Scheduled poll in 11s"
+   - "Receiver READY and STABLE" (after 11s)
+
+   ❌ Should NOT see:
+   - "Could not connect" errors
+   - Input switching failures after ready=true
+   ```
+
+3. **Parallel app usage:**
+   - Use Lexicon app while HA is polling
+   - Power ON from HA should still work
+   - No connection exhaustion
+
+### Upgrade Path
+
+**From v1.7.1 → v1.7.2:**
+```bash
+# 1. Stop Home Assistant (optional but recommended)
+ha core stop
+
+# 2. Replace integration files
+cd /config/custom_components/lexicon_av/
+# Copy new files
+
+# 3. Restart
+ha core restart
+
+# 4. Test power-on scripts 5 times
+# 5. Verify input switching works when ready=true
+```
+
+**Expected Behavior After Upgrade:**
+- ✅ Boot sequence takes 11-12 seconds (was 9-10s)
+- ✅ Input switching works immediately after ready=true
+- ✅ Power ON reliable on all attempts
+- ✅ No "Could not connect" errors
+
+---
+
 ## [1.7.1] - 2025-01-24
 
 ### 🐛 Critical Bugfix - Polling Lock Protection
