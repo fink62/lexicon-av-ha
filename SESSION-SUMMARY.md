@@ -1,54 +1,54 @@
 # Lexicon AV Integration - Session Summary
-## Von v1.6.0-FINAL bis v1.6.2
+## From v1.6.0-FINAL to v1.6.2
 
-**Datum:** 2024-01-24  
-**Session:** Debugging & Optimierung der Einschalt-Sequenz
+**Date:** 2024-01-24
+**Session:** Debugging & Optimization of Power-On Sequence
 
 ---
 
-## 🎯 Ausgangslage
+## 🎯 Initial Situation
 
-**Problem:** Integration v1.6.0 hatte 5-Sekunden Polling-Loop statt 30-Sekunden.
+**Problem:** Integration v1.6.0 had 5-second polling loop instead of 30-second.
 
-**Symptome:**
+**Symptoms:**
 - Continuous 5s Connect/Disconnect Cycle
-- State-Change Detection triggerte endless 5s interval
-- App konnte nicht parallel genutzt werden
-- "Remote Socket closed" Probleme
+- State-Change Detection triggered endless 5s interval
+- App could not be used in parallel
+- "Remote Socket closed" problems
 
 ---
 
-## 🔍 Gefundene Bugs & Fixes
+## 🔍 Bugs Found & Fixes
 
 ### Bug 1: Endless 5s Polling Loop (v1.6.0 → FIXED)
 
-**Ursache:**
+**Root Cause:**
 ```python
-# State-Change Detection setzte INTERVAL statt ONE-SHOT:
+# State-Change Detection set INTERVAL instead of ONE-SHOT:
 if state_changed:
-    async_track_time_interval(...)  # ← Läuft für immer!
+    async_track_time_interval(...)  # ← Runs forever!
 ```
 
 **Fix:**
-- Entfernte State-Change immediate polling komplett
-- Nutzt nur `_schedule_next_poll()` mit Startup-Logik
+- Removed State-Change immediate polling completely
+- Uses only `_schedule_next_poll()` with Startup logic
 
-**Result:** 
-- Erste 3 Polls: 5s (Startup)
-- Danach: 30s (Normal) ✅
+**Result:**
+- First 3 Polls: 5s (Startup)
+- After that: 30s (Normal) ✅
 
 ---
 
-### Bug 2: "ready" Flag zu früh (nach ~2s statt 8s)
+### Bug 2: "ready" Flag Too Early (after ~2s instead of 8s)
 
-**Problem:** 
-- Receiver braucht 6s bis Relay klickt
-- ready=true kam nach 2s (Volume Query funktionierte)
-- Input Switching funktionierte NICHT!
+**Problem:**
+- Receiver needs 6s until Relay clicks
+- ready=true came after 2s (Volume Query worked)
+- Input Switching did NOT work!
 
-**User Messung:**
-- Relay-Klick: 6 Sekunden nach Power ON
-- Benötigt: 8s (6s + 2s Puffer)
+**User Measurement:**
+- Relay-Click: 6 seconds after Power ON
+- Required: 8s (6s + 2s buffer)
 
 **Fix:**
 ```python
@@ -58,51 +58,51 @@ if self._state == MediaPlayerState.OFF:
 
 # In STEP 5: Ready Check
 if self._power_transition_until and datetime.now() < self._power_transition_until:
-    self._ready = False  # Warte 8s!
+    self._ready = False  # Wait 8s!
 else:
-    self._ready = True  # Relay geklickt!
+    self._ready = True  # Relay clicked!
 ```
 
-**Result:** ready=true nach 8 Sekunden ✅
+**Result:** ready=true after 8 seconds ✅
 
 ---
 
-### Bug 3: Unerwartetes Ausschalten nach Power ON
+### Bug 3: Unexpected Power OFF after Power ON
 
 **Problem:**
 ```
 12:22:17 - turn_on()
-12:22:20 - State = ON (optimistisch)
-12:22:20 - Poll läuft
-12:22:20 - get_power_state() → FALSE (Receiver bootet noch!)
-12:22:20 - State = OFF gesetzt! ❌
-12:22:20 - Receiver schaltet aus!
+12:22:20 - State = ON (optimistic)
+12:22:20 - Poll runs
+12:22:20 - get_power_state() → FALSE (Receiver still booting!)
+12:22:20 - State = OFF set! ❌
+12:22:20 - Receiver turns off!
 ```
 
 **Fix: Boot Protection**
 ```python
-# Während Boot: KEINE Power Query!
+# During Boot: NO Power Query!
 if self._power_transition_until and datetime.now() < self._power_transition_until:
     power_state = (self._state == MediaPlayerState.ON)  # Optimistic!
 else:
     power_state = await self._protocol.get_power_state()  # Normal
 ```
 
-**Result:** Kein unerwartetes Ausschalten! ✅
+**Result:** No unexpected power off! ✅
 
 ---
 
-### Bug 4: Script Timeout (15s zu kurz)
+### Bug 4: Script Timeout (15s too short)
 
 **Problem:**
 ```
-12:22:20 - turn_on() fertig, Script wartet
-12:22:34 - Poll läuft (14s später!)
+12:22:20 - turn_on() finished, Script waits
+12:22:34 - Poll runs (14s later!)
 12:22:35 - ready=true
-12:22:35 - Script Timeout! (genau 15s)
+12:22:35 - Script Timeout! (exactly 15s)
 ```
 
-**Root Cause:** Polling läuft nur alle 30s, ready kommt zu spät!
+**Root Cause:** Polling runs only every 30s, ready comes too late!
 
 **Fix: Scheduled Poll**
 ```python
@@ -111,7 +111,7 @@ if await self._protocol.power_on():
     async_call_later(self.hass, 9, self._trigger_poll_after_boot)
 ```
 
-**Result:** ready=true nach 9-10 Sekunden! ✅
+**Result:** ready=true after 9-10 seconds! ✅
 
 ---
 
@@ -119,7 +119,7 @@ if await self._protocol.power_on():
 
 **Problem:**
 ```python
-async_call_later(self.hass, 9, 
+async_call_later(self.hass, 9,
     lambda _: self.hass.async_create_task(...))  # ❌ Wrong thread!
 ```
 
@@ -134,30 +134,30 @@ def _trigger_poll_after_boot(self, _=None):
     self.hass.add_job(self._async_polling_update())  # ✅ Thread-safe!
 ```
 
-**Result:** Kein RuntimeError! ✅
+**Result:** No RuntimeError! ✅
 
 ---
 
-### Bug 6: Race Condition bei Commands nach Poll (v1.6.2)
+### Bug 6: Race Condition with Commands after Poll (v1.6.2)
 
 **Problem:**
 ```
 14:58:34.446 - Poll: ready=true
 14:58:34.455 - Poll: Disconnect
-14:58:34.458 - Command: Connect ❌ (3ms später!)
+14:58:34.458 - Command: Connect ❌ (3ms later!)
               ERROR: Could not connect
 ```
 
 **Fix: Connection Retry**
 ```python
-# In allen Command-Methoden:
+# In all Command methods:
 connected = await self._protocol.connect()
 if not connected:
     await asyncio.sleep(0.5)  # Retry
     connected = await self._protocol.connect()
 ```
 
-**Result:** Commands funktionieren nach Poll! ✅
+**Result:** Commands work after Poll! ✅
 
 ---
 
@@ -212,25 +212,25 @@ Turn ON → 2s
 Boot Timer → 8s
 Scheduled Poll → 9s
 ready=true → 10s
-Script durchlauf → 11s
+Script completion → 11s
 ```
 
 ### Relay Timing
-- Basierend auf User-Messung: 6s Relay-Klick
-- Timer: 8s (6s + 2s Puffer)
-- Boot Protection: Keine Power Queries während Boot
-- ready Flag: Nur nach Relay-Klick
+- Based on User measurement: 6s Relay-Click
+- Timer: 8s (6s + 2s buffer)
+- Boot Protection: No Power Queries during Boot
+- ready Flag: Only after Relay-Click
 
 ### Race Condition Handling
 - Connection Retry (500ms) in Commands
-- Funktioniert nach Poll-Disconnect
-- Keine "Could not connect" Fehler
+- Works after Poll-Disconnect
+- No "Could not connect" errors
 
 ### Scheduled Poll
 - Thread-safe Implementation
-- 9s nach turn_on
-- Triggert ready Flag rechtzeitig
-- Scripts laufen durch
+- 9s after turn_on
+- Triggers ready Flag in time
+- Scripts complete successfully
 
 ---
 
@@ -263,83 +263,83 @@ ha core restart
 
 ## 🧪 Testing Checklist v1.6.2
 
-- [x] Polling: 30s Intervall
-- [x] Startup: 3x 5s dann 30s
-- [x] Turn ON: Funktioniert
+- [x] Polling: 30s Interval
+- [x] Startup: 3x 5s then 30s
+- [x] Turn ON: Works
 - [x] Boot Timer: 8s
-- [x] Scheduled Poll: 9s nach turn_on
-- [x] ready Flag: Nach 10s
-- [x] BluRay Script: Läuft durch
-- [x] Input Switch: Funktioniert
-- [x] Connection Retry: Funktioniert
-- [x] Thread-safe: Keine Errors
-- [x] App parallel: Funktioniert
+- [x] Scheduled Poll: 9s after turn_on
+- [x] ready Flag: After 10s
+- [x] BluRay Script: Completes
+- [x] Input Switch: Works
+- [x] Connection Retry: Works
+- [x] Thread-safe: No Errors
+- [x] App in parallel: Works
 
 ---
 
-## 🎉 Erfolge dieser Session
+## 🎉 Achievements of this Session
 
 ### Bugs Fixed: 6
 1. ✅ 5s Polling Loop
 2. ✅ ready Flag Timing
-3. ✅ Unerwartetes Ausschalten
+3. ✅ Unexpected Power Off
 4. ✅ Script Timeout
 5. ✅ Threading Error
 6. ✅ Race Condition
 
 ### Code Quality
-- Saubere Boot Protection
+- Clean Boot Protection
 - Thread-safe Operations
-- Gutes Error Handling
-- Detaillierte Logs
+- Good Error Handling
+- Detailed Logs
 
 ### User Experience
-- BluRay Script funktioniert perfekt
-- ~10s von OFF zu ready
-- Zuverlässige Commands
-- App parallel nutzbar
+- BluRay Script works perfectly
+- ~10s from OFF to ready
+- Reliable Commands
+- App usable in parallel
 
 ---
 
 ## 📋 Next Steps (v1.7.0)
 
-**Siehe:** BACKLOG-v1.7.0.md
+**See:** BACKLOG-v1.7.0.md
 
-**Ziel:** Ersetze Retry-Logik durch Connection Lock Architecture
+**Goal:** Replace Retry logic with Connection Lock Architecture
 
 **Benefits:**
-- Keine Race Conditions möglich
-- Kein Retry-Delay nötig
-- Sauberere Code-Struktur
-- Root Cause statt Symptom-Fix
+- No Race Conditions possible
+- No Retry-Delay needed
+- Cleaner Code Structure
+- Root Cause instead of Symptom-Fix
 
-**Timeline:** Neue Chat-Session empfohlen
+**Timeline:** New Chat-Session recommended
 
 ---
 
 ## 💡 Lessons Learned
 
 ### Debugging Approach
-1. Systematische Log-Analyse
-2. Timeline-Rekonstruktion
-3. Root Cause statt Quick Fix
-4. Schrittweise Testing
+1. Systematic Log Analysis
+2. Timeline Reconstruction
+3. Root Cause instead of Quick Fix
+4. Step-by-step Testing
 
 ### Integration Design
-1. Boot-Timing ist kritisch (Relay!)
-2. Race Conditions erfordern Koordination
-3. Thread-safety ist wichtig
-4. Scheduled Operations brauchen Sorgfalt
+1. Boot-Timing is critical (Relay!)
+2. Race Conditions require Coordination
+3. Thread-safety is important
+4. Scheduled Operations need Care
 
 ### User Collaboration
-1. Messwerte nutzen (6s Relay)
-2. Real-world Testing unerlässlich
-3. Iteratives Vorgehen funktioniert
-4. Klare Kommunikation wichtig
+1. Use measured values (6s Relay)
+2. Real-world Testing essential
+3. Iterative Approach works
+4. Clear Communication important
 
 ---
 
-**Session Ende** 🎯
+**Session End** 🎯
 
-**Status:** v1.6.2 PRODUCTION READY ✅  
-**Next:** v1.7.0 Connection Lock Refactoring (neue Session)
+**Status:** v1.6.2 PRODUCTION READY ✅
+**Next:** v1.7.0 Connection Lock Refactoring (new session)

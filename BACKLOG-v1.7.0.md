@@ -1,41 +1,41 @@
 # Lexicon AV Integration v1.7.0 - Connection Lock Refactoring
 
-## 🎯 Ziel
-Ersetze Retry-Logik durch saubere Connection Lock Architecture um Race Conditions zu vermeiden.
+## 🎯 Goal
+Replace Retry logic with clean Connection Lock Architecture to avoid Race Conditions.
 
 ---
 
 ## 🔴 Problem (in v1.6.2)
-- Commands nutzen Retry-Logik (500ms Delay bei Connection-Fehler)
-- Race Condition zwischen Poll-Disconnect und Command-Connect
-- Symptom-Fix statt Root Cause Lösung
-- Funktioniert zwar, aber nicht elegant
+- Commands use Retry logic (500ms Delay on Connection error)
+- Race Condition between Poll-Disconnect and Command-Connect
+- Symptom-Fix instead of Root Cause Solution
+- Works, but not elegant
 
 ---
 
-## ✅ Lösung (v1.7.0)
-- Zentraler Connection Lock (`asyncio.Lock()`)
-- Alle Operationen nutzen `_execute_with_connection()` Helper
-- Garantiert: Nur EINE Operation gleichzeitig
-- Automatischer Abstand (100ms) zwischen Operationen
-- KEIN Retry mehr nötig
+## ✅ Solution (v1.7.0)
+- Central Connection Lock (`asyncio.Lock()`)
+- All operations use `_execute_with_connection()` Helper
+- Guaranteed: Only ONE operation at a time
+- Automatic spacing (100ms) between operations
+- NO Retry needed anymore
 
 ---
 
-## 📊 Architektur v1.7.0
+## 📊 Architecture v1.7.0
 
-### Neue Komponenten:
+### New Components:
 
 ```python
 class LexiconAVMediaPlayer:
     def __init__(self):
-        # NEU in v1.7.0:
-        self._connection_lock = asyncio.Lock()  # Garantiert single-threaded access
-        self._last_operation = None  # Timestamp für Spacing
-    
+        # NEW in v1.7.0:
+        self._connection_lock = asyncio.Lock()  # Guarantees single-threaded access
+        self._last_operation = None  # Timestamp for Spacing
+
     async def _execute_with_connection(self, operation_func, operation_name: str):
         """Central connection manager with lock.
-        
+
         Ensures:
         - Only one operation at a time (Lock)
         - Minimum 100ms spacing between operations
@@ -48,11 +48,11 @@ class LexiconAVMediaPlayer:
                 elapsed = (datetime.now() - self._last_operation).total_seconds()
                 if elapsed < 0.1:
                     await asyncio.sleep(0.1 - elapsed)
-            
+
             # Connect
             if not await self._protocol.connect():
                 return None
-            
+
             try:
                 # Execute operation
                 result = await operation_func()
@@ -69,7 +69,7 @@ class LexiconAVMediaPlayer:
 
 ### Task 1: Refactor `async_turn_on()`
 
-**VORHER (v1.6.2):**
+**BEFORE (v1.6.2):**
 ```python
 async def async_turn_on(self):
     if not await self._protocol.connect():
@@ -80,7 +80,7 @@ async def async_turn_on(self):
         await self._protocol.disconnect()
 ```
 
-**NACHHER (v1.7.0):**
+**AFTER (v1.7.0):**
 ```python
 async def async_turn_on(self):
     async def do_power_on():
@@ -158,7 +158,7 @@ async def async_volume_up(self):
     await self._execute_with_connection(do_volume_up, "volume_up")
 ```
 
-**Vorteil:** Lock garantiert dass Poll bereits disconnected ist! KEIN Retry nötig!
+**Advantage:** Lock garantiert dass Poll bereits disconnected ist! KEIN Retry nötig!
 
 ---
 
@@ -250,16 +250,16 @@ async def async_select_source(self, source):
 
 **Optional in v1.7.0:** Auch Polling nutzt Lock.
 
-**Vorteil:**
+**Advantage:**
 - Garantiert keine Überschneidung mit Commands
 - Noch sauberer
 
-**Nachteil:**
+**Disadvantage:**
 - Komplexer
 - Polling ist ohnehin periodisch (30s)
 - Weniger kritisch
 
-**Empfehlung:** Erstmal überspringen, später in v1.8.0.
+**Recommendation:** Erstmal überspringen, später in v1.8.0.
 
 ---
 
@@ -267,49 +267,49 @@ async def async_select_source(self, source):
 
 ### Test 1: Turn ON + Input Switch (BluRay Script)
 ```
-Erwartung:
-- turn_on() nutzt Lock
-- 9s später: scheduled poll nutzt Lock (wartet bis turn_on fertig)
+Expectation:
+- turn_on() uses Lock
+- 9s later: scheduled poll uses Lock (waits until turn_on finished)
 - ready=true
-- select_source nutzt Lock (wartet bis poll fertig)
-- KEIN "Could not connect" Fehler
-- KEIN 500ms Retry-Delay
-- Total: ~10-11 Sekunden
+- select_source uses Lock (waits until poll finished)
+- NO "Could not connect" error
+- NO 500ms Retry-Delay
+- Total: ~10-11 seconds
 ```
 
-### Test 2: Commands während Polling
+### Test 2: Commands during Polling
 ```
-Ablauf:
-1. Poll läuft (30s Zyklus)
-2. User klickt Volume Up während Poll läuft
-3. Volume Up wartet auf Lock
-4. Poll findet (disconnect)
-5. Volume Up bekommt Lock, führt aus
-6. Funktioniert ohne Retry!
+Flow:
+1. Poll runs (30s cycle)
+2. User clicks Volume Up while Poll runs
+3. Volume Up waits for Lock
+4. Poll finishes (disconnect)
+5. Volume Up gets Lock, executes
+6. Works without Retry!
 ```
 
-### Test 3: Schnelle Command-Sequenz
+### Test 3: Rapid Command Sequence
 ```
-Ablauf:
+Flow:
 1. turn_on()
-2. Sofort: select_source()
-3. Sofort: volume_up()
+2. Immediately: select_source()
+3. Immediately: volume_up()
 
-Erwartung:
-- Alle 3 serialisiert durch Lock
-- Minimum 100ms Spacing zwischen jedem
-- Alle funktionieren
-- KEIN Retry nötig
+Expectation:
+- All 3 serialized through Lock
+- Minimum 100ms Spacing between each
+- All work
+- NO Retry needed
 ```
 
-### Test 4: App parallel zu HA
+### Test 4: App parallel to HA
 ```
-Ablauf:
-1. App verbindet
-2. HA versucht Command
-3. Lock wartet
-4. Command schlägt EINMAL fehl (App blockiert)
-5. Aber keine endlose Retries
+Flow:
+1. App connects
+2. HA attempts Command
+3. Lock waits
+4. Command fails ONCE (App blocks)
+5. But no endless Retries
 ```
 
 ---
@@ -342,30 +342,30 @@ Ablauf:
 
 ## 🎯 Success Criteria
 
-v1.7.0 ist erfolgreich wenn:
+v1.7.0 is successful when:
 
-1. ✅ BluRay Script läuft in ~10s durch (ohne Retry-Delays)
-2. ✅ KEINE "Could not connect" Fehler in Logs
-3. ✅ KEINE Retry-Warnungen mehr
-4. ✅ Alle Commands funktionieren zuverlässig
-5. ✅ Code ist sauberer (keine Duplikate)
-6. ✅ Lock-Debug-Logs zeigen saubere Serialisierung
+1. ✅ BluRay Script completes in ~10s (without Retry-Delays)
+2. ✅ NO "Could not connect" errors in Logs
+3. ✅ NO Retry warnings anymore
+4. ✅ All Commands work reliably
+5. ✅ Code is cleaner (no duplicates)
+6. ✅ Lock-Debug-Logs show clean Serialization
 
 ---
 
-## 📊 Code-Metrik
+## 📊 Code Metrics
 
-### v1.6.2 (Vorher):
-- 7x manuelles `connect()` / `disconnect()`
-- 5x Retry-Logik (500ms Delay)
-- Race Conditions möglich
-- ~675 Zeilen Code
+### v1.6.2 (Before):
+- 7x manual `connect()` / `disconnect()`
+- 5x Retry logic (500ms Delay)
+- Race Conditions possible
+- ~675 lines of code
 
-### v1.7.0 (Nachher):
-- 1x zentrale `_execute_with_connection()`
-- 0x Retry-Logik (nicht nötig!)
-- Race Conditions UNMÖGLICH (Lock!)
-- ~650 Zeilen Code (weniger durch DRY!)
+### v1.7.0 (After):
+- 1x central `_execute_with_connection()`
+- 0x Retry logic (not needed!)
+- Race Conditions IMPOSSIBLE (Lock!)
+- ~650 lines of code (less through DRY!)
 
 ---
 
@@ -388,16 +388,16 @@ v1.7.0 ist erfolgreich wenn:
 
 ---
 
-## 💡 Hinweise für Implementation
+## 💡 Notes for Implementation
 
 ### Lock Best Practices:
 ```python
 # DO:
 async with self._connection_lock:
     # Connection operations
-    
+
 # DON'T:
-self._connection_lock.acquire()  # Manuell - fehleranfällig!
+self._connection_lock.acquire()  # Manual - error-prone!
 ```
 
 ### Error Handling:
@@ -408,7 +408,7 @@ async def _execute_with_connection(self, operation_func, operation_name):
             if not await self._protocol.connect():
                 _LOGGER.error("Could not connect for %s", operation_name)
                 return None
-            
+
             try:
                 return await operation_func()
             finally:
@@ -420,7 +420,7 @@ async def _execute_with_connection(self, operation_func, operation_name):
 
 ### Debug Logging:
 ```python
-# Hilfreich für Testing:
+# Helpful for Testing:
 _LOGGER.debug("Waiting for lock: %s", operation_name)
 async with self._connection_lock:
     _LOGGER.debug("Lock acquired: %s", operation_name)
@@ -432,26 +432,26 @@ async with self._connection_lock:
 
 ## 📁 Files to Modify
 
-- `/custom_components/lexicon_av/media_player.py` - Hauptdatei (alle Tasks)
-- `/custom_components/lexicon_av/manifest.json` - Version auf 1.7.0
-- `/custom_components/lexicon_av/CHANGELOG.md` - Changelog updaten
+- `/custom_components/lexicon_av/media_player.py` - Main file (all Tasks)
+- `/custom_components/lexicon_av/manifest.json` - Version to 1.7.0
+- `/custom_components/lexicon_av/CHANGELOG.md` - Update Changelog
 
 ---
 
 ## 🔍 Testing Checklist
 
-- [ ] BluRay Script läuft durch ohne Fehler
-- [ ] Logs zeigen Lock-Serialisierung
-- [ ] KEINE "Could not connect" Fehler
-- [ ] KEINE Retry-Warnungen
-- [ ] Volume Up/Down funktioniert
-- [ ] Mute funktioniert
-- [ ] Source Select funktioniert
-- [ ] Turn ON/OFF funktioniert
-- [ ] App parallel zu HA nutzbar
-- [ ] Polling läuft stabil (30s)
-- [ ] Ready Flag korrekt nach 9-10s
-- [ ] Scheduled Poll nach turn_on funktioniert
+- [ ] BluRay Script completes without errors
+- [ ] Logs show Lock-Serialization
+- [ ] NO "Could not connect" errors
+- [ ] NO Retry warnings
+- [ ] Volume Up/Down works
+- [ ] Mute works
+- [ ] Source Select works
+- [ ] Turn ON/OFF works
+- [ ] App usable parallel to HA
+- [ ] Polling runs stable (30s)
+- [ ] Ready Flag correct after 9-10s
+- [ ] Scheduled Poll after turn_on works
 
 ---
 
@@ -471,7 +471,7 @@ async with self._connection_lock:
 15:00:10 - Input switched (Lock released)
 15:00:11 - Script: DONE! ✅
 
-Total: ~11 Sekunden
+Total: ~11 seconds
 NO RETRIES! ✅
 NO RACE CONDITIONS! ✅
 PRODUCTION READY! ✅
@@ -479,4 +479,4 @@ PRODUCTION READY! ✅
 
 ---
 
-**Ende Backlog v1.7.0**
+**End Backlog v1.7.0**
