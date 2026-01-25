@@ -242,163 +242,179 @@ class LexiconMediaPlayer(MediaPlayerEntity):
     async def _async_update_status(self) -> None:
         """Query receiver status and update entity state with value caching."""
         
-        # Connect for this poll cycle
-        _LOGGER.debug("=== Poll #%d: Connecting ===", self._poll_count)
-        if not await self._protocol.connect():
-            _LOGGER.warning("⚠️ Could not connect for poll #%d (App using receiver?)", self._poll_count)
-            # Keep cached values, mark as not ready
-            self._ready = False
-            self._state = MediaPlayerState.OFF
-            self.async_write_ha_state()
-            return
-        
-        try:
-            _LOGGER.debug("=== Status update poll #%d ===", self._poll_count)
+        # Use lock to prevent interference with commands (v1.7.0)
+        _LOGGER.debug("[v1.7.0] Waiting for connection lock: polling_update")
+        async with self._connection_lock:
+            _LOGGER.debug("[v1.7.0] Lock acquired: polling_update")
             
-            # Track if ANY query succeeded (for cache timestamp)
-            queries_succeeded = False
+            # Ensure minimum spacing from last operation
+            if self._last_operation:
+                elapsed = (datetime.now() - self._last_operation).total_seconds()
+                if elapsed < 0.1:
+                    wait_time = 0.1 - elapsed
+                    _LOGGER.debug("[v1.7.0] Spacing: waiting %.3fs before polling", wait_time)
+                    await asyncio.sleep(wait_time)
             
-            # STEP 1: Query power state (with boot protection)
-            power_state = None
-            if self._power_transition_until and datetime.now() < self._power_transition_until:
-                # During boot transition: use optimistic state (don't query, receiver is booting!)
-                power_state = (self._state == MediaPlayerState.ON)
-                remaining = (self._power_transition_until - datetime.now()).total_seconds()
-                _LOGGER.debug("Boot transition active (%.1fs remaining), using optimistic state: %s", 
-                            remaining, power_state)
-            else:
-                # Normal operation: query actual power state
-                power_state = await self._protocol.get_power_state()
-                _LOGGER.debug("Power query result: %s", power_state)
-            
-            # STEP 2: Query all status (always, regardless of power)
-            # CACHING: Only update if query succeeds, keep old value on failure
-            volume = await self._protocol.get_volume()
-            if volume is not None:
-                self._volume_level = round(volume / 99.0, 2)
-                queries_succeeded = True
-                _LOGGER.debug("Volume: %d -> %.2f", volume, self._volume_level)
-            # else: keep old _volume_level value
-            
-            mute = await self._protocol.get_mute_state()
-            if mute is not None:
-                self._is_volume_muted = mute
-                queries_succeeded = True
-                _LOGGER.debug("Mute: %s", mute)
-            # else: keep old _is_volume_muted value
-            
-            source = await self._protocol.get_current_source()
-            if source is not None:
-                # Map to custom name if exists, show physical in brackets
-                if source in self._physical_to_name:
-                    custom_name = self._physical_to_name[source]
-                    self._current_source = f"{custom_name} ({source})"
-                    _LOGGER.debug("Source: %s -> %s (%s)", source, custom_name, source)
-                else:
-                    self._current_source = source
-                    _LOGGER.debug("Source: %s (no mapping)", source)
-                queries_succeeded = True
-            # else: keep old _current_source value
-            
-            # STEP 3: Determine power state with fallback
-            if power_state is not None:
-                # Trust power query
-                if power_state:
-                    # Detect OFF → ON transition for relay timing
-                    if self._state == MediaPlayerState.OFF:
-                        _LOGGER.info("🔌 State changed: OFF → ON (relay will click in ~6s, waiting 8s total)")
-                        self._power_transition_until = datetime.now() + timedelta(seconds=8)
-                        self._ready = False
-                    self._state = MediaPlayerState.ON
-                else:
-                    self._state = MediaPlayerState.OFF
-                    self._ready = False
-                    self._power_transition_until = None
-                    # Only clear audio when transitioning to OFF
-                    self._audio_format = None
-                    self._decode_mode = None
-                    self._sample_rate = None
-                    self._direct_mode = None
-            elif volume is not None or source is not None:
-                # Power query failed but got data -> assume ON
-                self._state = MediaPlayerState.ON
-                _LOGGER.info("Power query failed, but got volume/source -> assuming ON")
-            else:
-                # All failed -> assume OFF, but keep cached attributes visible
-                self._state = MediaPlayerState.OFF
-                _LOGGER.warning("All queries failed -> assuming OFF (cached values retained)")
-            
-            # STEP 4: Query audio status ONLY if ON
-            # CACHING: Only update if query succeeds
-            if self._state == MediaPlayerState.ON:
-                audio_format = await self._protocol.get_audio_format()
-                if audio_format:
-                    self._audio_format = audio_format
-                    queries_succeeded = True
-                # else: keep old _audio_format
-                
-                decode_mode = await self._protocol.get_decode_mode()
-                if decode_mode:
-                    self._decode_mode = decode_mode
-                    queries_succeeded = True
-                # else: keep old _decode_mode
-                
-                sample_rate = await self._protocol.get_sample_rate()
-                if sample_rate:
-                    self._sample_rate = sample_rate
-                    queries_succeeded = True
-                # else: keep old _sample_rate
-                
-                direct_mode = await self._protocol.get_direct_mode()
-                if direct_mode is not None:
-                    self._direct_mode = direct_mode
-                    queries_succeeded = True
-                # else: keep old _direct_mode
-            
-            # STEP 5: Set ready status
-            if self._state == MediaPlayerState.ON and (volume is not None or source is not None):
-                # Check if waiting for relay click (8s after State=ON)
-                if self._power_transition_until and datetime.now() < self._power_transition_until:
-                    elapsed = (datetime.now() - (self._power_transition_until - timedelta(seconds=8))).total_seconds()
-                    remaining = (self._power_transition_until - datetime.now()).total_seconds()
-                    _LOGGER.info("⏳ Boot sequence: %.1fs elapsed, relay in ~%.1fs (%.1fs until ready)", 
-                                elapsed, max(0, 6.0 - elapsed), remaining)
-                    self._ready = False
-                else:
-                    # Boot period complete
-                    if not self._ready:
-                        _LOGGER.info("✅ Receiver READY - relay clicked, input switching available")
-                    self._ready = True
-                    self._power_transition_until = None  # Clear transition timer
-            else:
-                if self._ready:
-                    _LOGGER.info("❌ Receiver is NOT READY")
+            # Connect for this poll cycle
+            _LOGGER.debug("=== Poll #%d: Connecting ===", self._poll_count)
+            if not await self._protocol.connect():
+                _LOGGER.warning("⚠️ Could not connect for poll #%d (App using receiver?)", self._poll_count)
+                # Keep cached values, mark as not ready
                 self._ready = False
+                self._state = MediaPlayerState.OFF
+                self.async_write_ha_state()
+                _LOGGER.debug("[v1.7.0] Lock released: polling_update (connection failed)")
+                return
             
-            # Track last successful poll timestamp
-            if queries_succeeded:
-                self._last_successful_poll = datetime.now()
-                _LOGGER.debug("✅ Poll succeeded, values cached at %s", 
-                            self._last_successful_poll.strftime("%H:%M:%S"))
-            else:
-                _LOGGER.warning("⚠️ All queries failed, keeping cached values")
+            try:
+                _LOGGER.debug("=== Status update poll #%d ===", self._poll_count)
+                
+                # Track if ANY query succeeded (for cache timestamp)
+                queries_succeeded = False
             
-            _LOGGER.debug(
-                "Poll complete: state=%s ready=%s vol=%.2f mute=%s src=%s",
-                self._state, self._ready, 
-                self._volume_level if self._volume_level else 0.0,
-                self._is_volume_muted, self._current_source
-            )
+                # STEP 1: Query power state (with boot protection)
+                power_state = None
+                if self._power_transition_until and datetime.now() < self._power_transition_until:
+                    # During boot transition: use optimistic state (don't query, receiver is booting!)
+                    power_state = (self._state == MediaPlayerState.ON)
+                    remaining = (self._power_transition_until - datetime.now()).total_seconds()
+                    _LOGGER.debug("Boot transition active (%.1fs remaining), using optimistic state: %s", 
+                                remaining, power_state)
+                else:
+                    # Normal operation: query actual power state
+                    power_state = await self._protocol.get_power_state()
+                    _LOGGER.debug("Power query result: %s", power_state)
             
-            self.async_write_ha_state()
+                # STEP 2: Query all status (always, regardless of power)
+                # CACHING: Only update if query succeeds, keep old value on failure
+                volume = await self._protocol.get_volume()
+                if volume is not None:
+                    self._volume_level = round(volume / 99.0, 2)
+                    queries_succeeded = True
+                    _LOGGER.debug("Volume: %d -> %.2f", volume, self._volume_level)
+                # else: keep old _volume_level value
             
-        except Exception as err:
-            _LOGGER.error("Status update error: %s", err, exc_info=True)
-            self._ready = False
-        finally:
-            # ALWAYS disconnect after poll
-            _LOGGER.debug("=== Poll #%d: Disconnecting ===", self._poll_count)
-            await self._protocol.disconnect()
+                mute = await self._protocol.get_mute_state()
+                if mute is not None:
+                    self._is_volume_muted = mute
+                    queries_succeeded = True
+                    _LOGGER.debug("Mute: %s", mute)
+                # else: keep old _is_volume_muted value
+            
+                source = await self._protocol.get_current_source()
+                if source is not None:
+                    # Map to custom name if exists, show physical in brackets
+                    if source in self._physical_to_name:
+                        custom_name = self._physical_to_name[source]
+                        self._current_source = f"{custom_name} ({source})"
+                        _LOGGER.debug("Source: %s -> %s (%s)", source, custom_name, source)
+                    else:
+                        self._current_source = source
+                        _LOGGER.debug("Source: %s (no mapping)", source)
+                    queries_succeeded = True
+                # else: keep old _current_source value
+            
+                # STEP 3: Determine power state with fallback
+                if power_state is not None:
+                    # Trust power query
+                    if power_state:
+                        # Detect OFF → ON transition for relay timing
+                        if self._state == MediaPlayerState.OFF:
+                            _LOGGER.info("🔌 State changed: OFF → ON (relay will click in ~6s, waiting 8s total)")
+                            self._power_transition_until = datetime.now() + timedelta(seconds=8)
+                            self._ready = False
+                        self._state = MediaPlayerState.ON
+                    else:
+                        self._state = MediaPlayerState.OFF
+                        self._ready = False
+                        self._power_transition_until = None
+                        # Only clear audio when transitioning to OFF
+                        self._audio_format = None
+                        self._decode_mode = None
+                        self._sample_rate = None
+                        self._direct_mode = None
+                elif volume is not None or source is not None:
+                    # Power query failed but got data -> assume ON
+                    self._state = MediaPlayerState.ON
+                    _LOGGER.info("Power query failed, but got volume/source -> assuming ON")
+                else:
+                    # All failed -> assume OFF, but keep cached attributes visible
+                    self._state = MediaPlayerState.OFF
+                    _LOGGER.warning("All queries failed -> assuming OFF (cached values retained)")
+            
+                # STEP 4: Query audio status ONLY if ON
+                # CACHING: Only update if query succeeds
+                if self._state == MediaPlayerState.ON:
+                    audio_format = await self._protocol.get_audio_format()
+                    if audio_format:
+                        self._audio_format = audio_format
+                        queries_succeeded = True
+                    # else: keep old _audio_format
+                
+                    decode_mode = await self._protocol.get_decode_mode()
+                    if decode_mode:
+                        self._decode_mode = decode_mode
+                        queries_succeeded = True
+                    # else: keep old _decode_mode
+                
+                    sample_rate = await self._protocol.get_sample_rate()
+                    if sample_rate:
+                        self._sample_rate = sample_rate
+                        queries_succeeded = True
+                    # else: keep old _sample_rate
+                
+                    direct_mode = await self._protocol.get_direct_mode()
+                    if direct_mode is not None:
+                        self._direct_mode = direct_mode
+                        queries_succeeded = True
+                    # else: keep old _direct_mode
+            
+                # STEP 5: Set ready status
+                if self._state == MediaPlayerState.ON and (volume is not None or source is not None):
+                    # Check if waiting for relay click (8s after State=ON)
+                    if self._power_transition_until and datetime.now() < self._power_transition_until:
+                        elapsed = (datetime.now() - (self._power_transition_until - timedelta(seconds=8))).total_seconds()
+                        remaining = (self._power_transition_until - datetime.now()).total_seconds()
+                        _LOGGER.info("⏳ Boot sequence: %.1fs elapsed, relay in ~%.1fs (%.1fs until ready)", 
+                                    elapsed, max(0, 6.0 - elapsed), remaining)
+                        self._ready = False
+                    else:
+                        # Boot period complete
+                        if not self._ready:
+                            _LOGGER.info("✅ Receiver READY - relay clicked, input switching available")
+                        self._ready = True
+                        self._power_transition_until = None  # Clear transition timer
+                else:
+                    if self._ready:
+                        _LOGGER.info("❌ Receiver is NOT READY")
+                    self._ready = False
+            
+                # Track last successful poll timestamp
+                if queries_succeeded:
+                    self._last_successful_poll = datetime.now()
+                    _LOGGER.debug("✅ Poll succeeded, values cached at %s", 
+                                self._last_successful_poll.strftime("%H:%M:%S"))
+                else:
+                    _LOGGER.warning("⚠️ All queries failed, keeping cached values")
+            
+                _LOGGER.debug(
+                    "Poll complete: state=%s ready=%s vol=%.2f mute=%s src=%s",
+                    self._state, self._ready, 
+                    self._volume_level if self._volume_level else 0.0,
+                    self._is_volume_muted, self._current_source
+                )
+            
+                self.async_write_ha_state()
+            
+            except Exception as err:
+                _LOGGER.error("Status update error: %s", err, exc_info=True)
+                self._ready = False
+            finally:
+                # ALWAYS disconnect after poll
+                _LOGGER.debug("=== Poll #%d: Disconnecting ===", self._poll_count)
+                await self._protocol.disconnect()
+                self._last_operation = datetime.now()
+                _LOGGER.debug("[v1.7.0] Lock released: polling_update")
 
     @property
     def supported_features(self) -> MediaPlayerEntityFeature:

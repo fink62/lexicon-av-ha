@@ -2,7 +2,67 @@
 
 All notable changes to the Lexicon AV Receiver Home Assistant integration.
 
+## [1.7.1] - 2025-01-24
+
+### 🐛 Critical Bugfix - Polling Lock Protection
+
+**Fixed race condition between polling and commands.**
+
+### Problem in v1.7.0
+Command methods used connection lock ✅, but polling did NOT ❌.
+
+**Timeline (v1.7.0):**
+```
+17:53:11.192 - Polling: Disconnected (NO LOCK)
+17:53:11.195 - select_source: Could not connect (3ms later!) ❌
+```
+
+Result: Commands could interfere with polling, causing "Could not connect" errors.
+
+### Solution in v1.7.1
+**Polling now uses connection lock** - ALL connection operations are serialized.
+
+**Changed:**
+- `_async_update_status()` now wraps entire poll in `async with self._connection_lock`
+- Polling respects 100ms spacing like all other operations
+- Lock messages visible in debug logs
+
+**Timeline (v1.7.1):**
+```
+17:53:11.000 - [v1.7.0] Lock acquired: polling_update
+17:53:11.500 - Polling queries...
+17:53:12.000 - [v1.7.0] Lock released: polling_update
+17:53:12.001 - [v1.7.0] Waiting for connection lock: select_source ← Waits!
+17:53:12.101 - [v1.7.0] Lock acquired: select_source (100ms spacing) ✅
+17:53:12.500 - Source switched successfully ✅
+```
+
+### Impact
+**v1.7.0 users:** Upgrade to v1.7.1 immediately!
+- v1.7.0 has race conditions between polling and commands
+- Symptoms: "Could not connect for select_source" errors
+- Fix: Polling now uses lock
+
+**Code changes:**
+- `media_player.py`: +16 lines (679 total, was 663 in v1.7.0)
+- Polling method wrapped in lock context
+- No other changes needed
+
+### Migration
+**From v1.7.0 → v1.7.1:**
+- Drop-in replacement
+- Just replace files and restart
+- No configuration changes
+
+**From v1.6.2 → v1.7.1:**
+- Skip v1.7.0 entirely
+- Use v1.7.1 directly
+
+---
+
 ## [1.7.0] - 2025-01-24
+
+⚠️ **DO NOT USE - Has race condition bug. Use v1.7.1 instead!**
 
 ### 🎉 Major Refactoring - Connection Lock Architecture
 
