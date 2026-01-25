@@ -109,8 +109,8 @@ class LexiconProtocol:
                 self._writer.close()
                 await self._writer.wait_closed()
                 # Delay to ensure TCP connection fully closes before next connect
-                # Lexicon receiver needs ~100ms to reset TCP stack
-                await asyncio.sleep(0.1)  # 100ms
+                # Lexicon RV-9 needs ~200ms to reset TCP stack (tested empirically)
+                await asyncio.sleep(0.2)  # 200ms
             except Exception as err:
                 _LOGGER.debug("Error closing connection: %s", err)
         
