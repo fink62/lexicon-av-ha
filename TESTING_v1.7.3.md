@@ -1,4 +1,4 @@
-# 🧪 Lexicon AV Integration v1.7.0 - Testing Checklist
+# 🧪 Lexicon AV Integration v1.7.3 - Testing Checklist
 
 ## Pre-Installation Testing (v1.6.2 Baseline)
 
@@ -28,7 +28,7 @@ Before upgrading, verify your current v1.6.2 installation works:
 
 ---
 
-## Post-Installation Testing (v1.7.0)
+## Post-Installation Testing (v1.7.3)
 
 ### ✅ Test 1: Basic Functionality (Critical)
 
@@ -81,26 +81,26 @@ Before upgrading, verify your current v1.6.2 installation works:
 
 ---
 
-### ✅ Test 2: BluRay Script (Critical for v1.7.0)
+### ✅ Test 2: Script Test - Power ON → Source Switch (CRITICAL)
 
-This tests the scheduled poll after power ON and input switching.
+This is the most important test for v1.7.3!
 
 **Script:**
 ```yaml
-alias: Test BluRay v1.7.0
+alias: Test Music/Radio v1.7.3
 sequence:
   - service: media_player.turn_on
     target:
       entity_id: media_player.lexicon_av
   
   - wait_template: "{{ is_state_attr('media_player.lexicon_av', 'ready', true) }}"
-    timeout: "00:00:15"
+    timeout: "00:00:20"
   
   - service: media_player.select_source
     target:
       entity_id: media_player.lexicon_av
     data:
-      source: "BD"  # Or your BluRay input name
+      source: "DAB"  # Or "BD", "FM", etc.
   
   - delay:
       seconds: 2
@@ -110,37 +110,47 @@ sequence:
 ```
 00:00 - turn_on sent (lock acquired)
 00:02 - turn_on complete (lock released)
-00:09 - Scheduled poll runs (lock acquired)
-00:10 - ready=true (lock released)
-00:10 - select_source runs (lock acquired)
-00:11 - Input switched (lock released)
-00:11 - Script DONE! ✅
+00:11 - Polling runs (lock acquired)
+00:12 - ready=true (lock released + 50ms TCP cleanup)
+00:12 - select_source runs (lock acquired)
+00:13 - Connected successfully! ✅
+00:13 - Input switched (lock released)
+00:13 - Script DONE! ✅
 ```
 
 **Checklist:**
-- [ ] Script completes in ~11 seconds (not timing out!)
+- [ ] Script completes successfully (no timeout!)
 - [ ] Receiver powers on
-- [ ] Ready flag becomes true after ~10s
+- [ ] Ready flag becomes true after ~11-12s
 - [ ] Input switches successfully
-- [ ] **NO "Could not connect" errors** ✅
-- [ ] **NO 500ms retry delays** ✅
+- [ ] **NO "Could not connect for select_source" errors** ✅
+- [ ] **NO retry warnings** ✅
 - [ ] Check logs show proper lock serialization
 
-**Log Pattern to Look For:**
+**Expected Log Pattern:**
 ```
 [v1.7.0] Waiting for connection lock: turn_on
 [v1.7.0] Lock acquired: turn_on
-[v1.7.0] Completed: turn_on
+Connected to Lexicon at 192.168.20.178:50000
+Power ON command sent
+Disconnected from Lexicon
 [v1.7.0] Lock released: turn_on
-... 9 seconds later ...
+
+... ~11 seconds later ...
+
 [v1.7.0] Waiting for connection lock: polling_update
 [v1.7.0] Lock acquired: polling_update
-[POLL] ready=true
+Connected to Lexicon
+✅ Receiver READY and STABLE
+Disconnected from Lexicon (+ 50ms delay)
 [v1.7.0] Lock released: polling_update
+
 [v1.7.0] Waiting for connection lock: select_source
 [v1.7.0] Lock acquired: select_source
+Connected to Lexicon ✅ ← NO ERROR!
+Source selected: DAB
+Disconnected from Lexicon
 [v1.7.0] Completed: select_source
-[v1.7.0] Lock released: select_source
 ```
 
 ---
@@ -157,14 +167,12 @@ This tests that commands wait gracefully for polling to complete.
 
 **Expected Behavior:**
 ```
-15:00:30.000 - [POLL] Waiting for connection lock: polling_update
-15:00:30.001 - [POLL] Lock acquired: polling_update
+15:00:30.000 - [POLL] Lock acquired: polling_update
 15:00:30.500 - [USER] Click volume up button
 15:00:30.501 - [v1.7.0] Waiting for connection lock: volume_up  ← WAITING!
 15:00:32.000 - [POLL] Completed, lock released
 15:00:32.001 - [v1.7.0] Lock acquired: volume_up  ← NOW EXECUTES!
 15:00:32.500 - [v1.7.0] Completed: volume_up
-15:00:32.501 - [v1.7.0] Lock released: volume_up
 ```
 
 **Checklist:**
@@ -178,7 +186,7 @@ This tests that commands wait gracefully for polling to complete.
 
 ### ✅ Test 4: Rapid Command Sequence (Lock Stress Test)
 
-This tests lock serialization with multiple rapid commands.
+Tests lock serialization with multiple rapid commands.
 
 **Procedure:**
 1. Enable debug logging
@@ -213,7 +221,7 @@ All commands execute in sequence with 100ms spacing, no errors.
 
 ### ✅ Test 5: App Compatibility (Coexistence Test)
 
-This tests that the Lexicon app can still be used alongside the integration.
+Tests that the Lexicon app can still be used alongside the integration.
 
 **Procedure:**
 1. Integration running (polling every 30s)
@@ -233,13 +241,13 @@ This tests that the Lexicon app can still be used alongside the integration.
 - [ ] No "Remote Socket Closed" errors
 - [ ] Polling continues normally
 
-**Note:** If app connection fails during a poll (2s window), this is expected behavior. Retry after a few seconds.
+**Note:** If app connection fails during a poll (2s window), this is expected. Retry after a few seconds.
 
 ---
 
 ### ✅ Test 6: External State Changes (Detection Test)
 
-This tests that external power changes are detected correctly.
+Tests that external power changes are detected correctly.
 
 **Procedure:**
 1. Receiver is OFF
@@ -266,7 +274,7 @@ This tests that external power changes are detected correctly.
 
 ### ✅ Test 7: Performance Comparison (Speed Test)
 
-Compare command execution speed between v1.6.2 and v1.7.0.
+Compare command execution speed.
 
 **Measurement:**
 Time volume up command from button click to volume change.
@@ -275,12 +283,13 @@ Time volume up command from button click to volume change.
 - Best case: ~0.5 seconds
 - Worst case: ~1.0 seconds (with 500ms retry)
 
-**v1.7.0 (no retry):**
-- Expected: ~0.4-0.5 seconds (consistent!)
+**v1.7.3 (no retry, clean locks):**
+- Expected: ~0.5 seconds (consistent!)
 - No 500ms retry delays
+- +50ms TCP cleanup (not noticeable)
 
 **Checklist:**
-- [ ] Commands feel more responsive
+- [ ] Commands feel responsive
 - [ ] No noticeable delays
 - [ ] Volume responds immediately
 - [ ] Input switching is smooth
@@ -312,11 +321,11 @@ Then restart Home Assistant.
 
 ## Success Criteria
 
-**v1.7.0 is successful if:**
+**v1.7.3 is successful if:**
 
 1. ✅ All basic functions work (power, volume, mute, source)
-2. ✅ BluRay script completes in ~10-11 seconds
-3. ✅ NO "Could not connect" errors in normal operation
+2. ✅ Music/Radio script completes successfully
+3. ✅ **NO "Could not connect for select_source" errors**
 4. ✅ NO retry warnings in logs
 5. ✅ Commands feel responsive (no 500ms delays)
 6. ✅ Lock serialization visible in debug logs
@@ -327,7 +336,7 @@ Then restart Home Assistant.
 
 ## Rollback Procedure
 
-If v1.7.0 has issues:
+If v1.7.3 has issues:
 
 1. Stop Home Assistant
 2. Restore v1.6.2 backup:
@@ -344,15 +353,36 @@ If v1.7.0 has issues:
 
 ---
 
-## Known Issues (v1.7.0)
+## Version History
 
-**None reported yet!**
+### v1.7.0 
+⚠️ DO NOT USE - Polling had no lock
 
-If you encounter issues:
-1. Check logs for error messages
-2. Verify v1.6.2 baseline tests passed
-3. Enable debug logging
-4. Report on GitHub with logs and steps to reproduce
+### v1.7.1 
+⚠️ DO NOT USE - Polling has lock, but protocol also has lock (duplicate)
+
+### v1.7.2 
+⚠️ DO NOT USE - Duplicate locks cause race conditions
+
+### v1.7.3 
+✅ **USE THIS** - Single lock (media player only), 50ms TCP cleanup delay
+
+---
+
+## What Changed in v1.7.3?
+
+**From v1.7.2:**
+- Removed `_connection_lock` from `lexicon_protocol.py`
+- Removed lock wrapper from `connect()` and `disconnect()`
+- Added 50ms delay after TCP close in `disconnect()`
+
+**Files Modified:**
+- `lexicon_protocol.py` - Lock removed, TCP cleanup delay added
+- `manifest.json` - Version bump to 1.7.3
+
+**Files Unchanged:**
+- `media_player.py` - No changes (already correct!)
+- All other files
 
 ---
 
@@ -368,10 +398,10 @@ If you encounter issues:
 - [ ] Command during boot (8s window) → Should queue
 - [ ] Command during scheduled poll → Should queue
 - [ ] Receiver unplugged → Should handle gracefully
-- [ ] App connected when HA tries command → Should retry once (in protocol layer)
+- [ ] App connected when HA tries command → Should wait and succeed
 
 ---
 
 **Happy Testing!** 🎉
 
-Report any issues on GitHub: https://github.com/USERNAME/lexicon-av-ha/issues
+Report any issues with detailed logs!

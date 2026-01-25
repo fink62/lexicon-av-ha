@@ -51,7 +51,6 @@ class LexiconProtocol:
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
-        self._connection_lock = asyncio.Lock()
         
         # Reconnect handling with exponential backoff
         self._reconnect_attempts = 0
@@ -61,63 +60,63 @@ class LexiconProtocol:
 
     async def connect(self) -> bool:
         """Connect to the Lexicon receiver with connection state management."""
-        async with self._connection_lock:
-            # Already connected
-            if self._connected and self._writer and self._reader:
-                return True
-            
-            # Check reconnect throttling
-            if self._last_reconnect_attempt:
-                time_since_last = datetime.now() - self._last_reconnect_attempt
-                if time_since_last < self._min_reconnect_interval:
-                    _LOGGER.debug(
-                        "Reconnect throttled, waiting %.1fs",
-                        (self._min_reconnect_interval - time_since_last).total_seconds()
-                    )
-                    return False
-            
-            self._last_reconnect_attempt = datetime.now()
-            
-            try:
-                self._reader, self._writer = await asyncio.wait_for(
-                    asyncio.open_connection(self._host, self._port),
-                    timeout=self._timeout
+        # Already connected
+        if self._connected and self._writer and self._reader:
+            return True
+        
+        # Check reconnect throttling
+        if self._last_reconnect_attempt:
+            time_since_last = datetime.now() - self._last_reconnect_attempt
+            if time_since_last < self._min_reconnect_interval:
+                _LOGGER.debug(
+                    "Reconnect throttled, waiting %.1fs",
+                    (self._min_reconnect_interval - time_since_last).total_seconds()
                 )
-                self._connected = True
-                self._reconnect_attempts = 0
-                _LOGGER.info("Connected to Lexicon at %s:%s", self._host, self._port)
-                return True
-                
-            except (asyncio.TimeoutError, OSError) as err:
-                self._reconnect_attempts += 1
-                self._connected = False
-                
-                if self._reconnect_attempts >= self._max_reconnect_attempts:
-                    _LOGGER.error(
-                        "Failed to connect after %d attempts: %s",
-                        self._reconnect_attempts, err
-                    )
-                else:
-                    _LOGGER.warning(
-                        "Connection attempt %d/%d failed: %s",
-                        self._reconnect_attempts, self._max_reconnect_attempts, err
-                    )
                 return False
+        
+        self._last_reconnect_attempt = datetime.now()
+        
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(self._host, self._port),
+                timeout=self._timeout
+            )
+            self._connected = True
+            self._reconnect_attempts = 0
+            _LOGGER.info("Connected to Lexicon at %s:%s", self._host, self._port)
+            return True
+            
+        except (asyncio.TimeoutError, OSError) as err:
+            self._reconnect_attempts += 1
+            self._connected = False
+            
+            if self._reconnect_attempts >= self._max_reconnect_attempts:
+                _LOGGER.error(
+                    "Failed to connect after %d attempts: %s",
+                    self._reconnect_attempts, err
+                )
+            else:
+                _LOGGER.warning(
+                    "Connection attempt %d/%d failed: %s",
+                    self._reconnect_attempts, self._max_reconnect_attempts, err
+                )
+            return False
 
     async def disconnect(self):
         """Disconnect from the receiver."""
-        async with self._connection_lock:
-            if self._writer:
-                try:
-                    self._writer.close()
-                    await self._writer.wait_closed()
-                except Exception as err:
-                    _LOGGER.debug("Error closing connection: %s", err)
-            
-            self._connected = False
-            self._reader = None
-            self._writer = None
-            _LOGGER.info("Disconnected from Lexicon")
+        if self._writer:
+            try:
+                self._writer.close()
+                await self._writer.wait_closed()
+                # Small delay to ensure TCP connection fully closes before next connect
+                await asyncio.sleep(0.05)  # 50ms
+            except Exception as err:
+                _LOGGER.debug("Error closing connection: %s", err)
+        
+        self._connected = False
+        self._reader = None
+        self._writer = None
+        _LOGGER.info("Disconnected from Lexicon")
 
     async def _read_frame(self) -> Optional[bytes]:
         """

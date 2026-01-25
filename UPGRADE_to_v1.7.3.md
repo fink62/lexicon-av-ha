@@ -1,13 +1,14 @@
-# 🚀 Upgrade Guide: v1.6.2 → v1.7.0
+# 🚀 Upgrade Guide: v1.6.2 → v1.7.3
 
 ## Overview
 
-v1.7.0 is a **major refactoring** that replaces retry-based connection handling with lock-based architecture. This eliminates race conditions and improves performance.
+v1.7.3 is a **major refactoring** with **critical bugfixes** that replaces retry-based connection handling with lock-based architecture and eliminates race conditions.
 
 **Key Changes:**
 - ✅ Connection lock prevents race conditions
 - ✅ No more 500ms retry delays
-- ✅ 31 lines of code removed
+- ✅ 50ms TCP cleanup delay ensures clean disconnects
+- ✅ Single lock architecture (media player only)
 - ✅ Drop-in replacement (no breaking changes!)
 
 ---
@@ -16,7 +17,7 @@ v1.7.0 is a **major refactoring** that replaces retry-based connection handling 
 
 Before upgrading, ensure:
 
-- [ ] **Current version is v1.6.2** (or v1.6.0+)
+- [ ] **Current version is v1.6.2** (recommended starting point)
   - Check `manifest.json` or Home Assistant integration details
   
 - [ ] **Integration is working correctly**
@@ -34,6 +35,22 @@ Before upgrading, ensure:
 
 ---
 
+## Version Compatibility
+
+### ✅ Recommended Upgrade Path:
+
+**From v1.6.2 → v1.7.3:** Direct upgrade (recommended)
+
+### ⚠️ Skip These Versions:
+
+- **v1.7.0** - Had polling without lock (race conditions)
+- **v1.7.1** - Had duplicate locks (incomplete fix)
+- **v1.7.2** - Duplicate locks caused new race conditions
+
+If you have v1.7.0, v1.7.1, or v1.7.2 installed, upgrade to v1.7.3 immediately!
+
+---
+
 ## Upgrade Methods
 
 Choose one:
@@ -43,22 +60,20 @@ Choose one:
 **Step 1: Backup current version**
 ```bash
 cd /config/custom_components/
-cp -r lexicon_av/ lexicon_av.v1.6.2.backup/
+cp -r lexicon_av/ lexicon_av.backup/
 ```
 
-**Step 2: Stop integration (optional)**
+**Step 2: Extract v1.7.3**
 ```bash
-# Not strictly necessary, but cleaner
-ha core restart
+# Upload v1.7.3 ZIP to /config/
+cd /config/
+unzip lexicon-av-v1.7.3.zip
 ```
 
 **Step 3: Replace files**
 ```bash
-# Upload v1.7.0 files to /config/lexicon_av_v1.7.0/
-# Then:
-cd /config/custom_components/
-rm -rf lexicon_av/
-mv /config/lexicon_av_v1.7.0/ lexicon_av/
+cd lexicon-av-v1.7.3/
+cp -r custom_components/lexicon_av/* /config/custom_components/lexicon_av/
 ```
 
 **Step 4: Clear Python cache**
@@ -72,15 +87,16 @@ ha core restart
 ```
 
 **Step 6: Verify upgrade**
-- Check integration version in UI (should show 1.7.0)
-- Check logs for `[v1.7.0]` messages
-- Test basic functions
+```bash
+grep "version" /config/custom_components/lexicon_av/manifest.json
+# Should show: "1.7.3"
+```
 
 ---
 
 ### Method 2: File Editor / Samba
 
-**Step 1: Download v1.7.0 release**
+**Step 1: Download v1.7.3 release**
 - Get ZIP file from releases
 - Extract to local folder
 
@@ -93,7 +109,7 @@ ha core restart
 
 **Step 4: Replace files**
 - Delete all files in `/config/custom_components/lexicon_av/`
-- Upload v1.7.0 files
+- Upload v1.7.3 files from extracted ZIP
 
 **Step 5: Delete Python cache folder**
 - Delete `/config/custom_components/lexicon_av/__pycache__/` if exists
@@ -102,7 +118,7 @@ ha core restart
 - Settings > System > Restart Home Assistant
 
 **Step 7: Verify upgrade**
-- Check Integrations page (should show 1.7.0)
+- Check Integrations page (should show 1.7.3)
 - Test basic functions
 
 ---
@@ -114,7 +130,7 @@ If you installed via Git:
 ```bash
 cd /config/custom_components/lexicon_av/
 git fetch
-git checkout v1.7.0
+git checkout v1.7.3
 rm -rf __pycache__/
 ha core restart
 ```
@@ -127,7 +143,7 @@ ha core restart
 
 1. **Check version:**
    - Go to: Settings > Devices & Services > Lexicon AV
-   - Should show: Version 1.7.0
+   - Should show: Version 1.7.3
 
 2. **Test power:**
    - Call `media_player.turn_on`
@@ -146,12 +162,19 @@ ha core restart
    - Should respond immediately
    - No noticeable delays
 
+5. **TEST SOURCE SWITCHING (CRITICAL):**
+   - Power ON receiver
+   - Wait for ready flag
+   - Select a different input
+   - Should switch successfully
+   - **NO "Could not connect" errors!** ✅
+
 ### Comprehensive Test (30 minutes)
 
-Follow the complete testing checklist: `TESTING_v1.7.0.md`
+Follow the complete testing checklist: `TESTING_v1.7.3.md`
 
 **Critical tests:**
-- BluRay script (turn_on → wait → select_source)
+- Music/Radio script (turn_on → wait → select_source)
 - Commands during polling (race condition test)
 - App compatibility (if you use the Lexicon app)
 
@@ -173,30 +196,30 @@ Follow the complete testing checklist: `TESTING_v1.7.0.md`
 
 ### What's Different:
 
-1. **Commands are slightly faster**
+1. **Source switching now works reliably**
+   - v1.7.2: "Could not connect for select_source" errors
+   - v1.7.3: Works perfectly! ✅
+
+2. **Commands are slightly faster**
    - No 500ms retry delays
    - Commands execute immediately when lock available
+   - +50ms TCP cleanup (not noticeable)
 
-2. **Debug logs are more detailed**
-   - New `[v1.7.0]` prefix on lock messages
-   - Lock acquire/release visible
-   - Spacing enforcement logged
-
-3. **No more retry warnings**
-   - v1.6.2: "Could not connect, retrying after 500ms..."
-   - v1.7.0: Commands wait for lock, no retry needed
+3. **Debug logs show single lock**
+   - Only media_player lock messages
+   - No duplicate protocol lock messages
 
 ### What's the Same:
 
 1. **Power ON timing unchanged**
    - Still 8s boot timer
-   - Still 9s scheduled poll
-   - Still ~10s until ready flag
+   - Still ~11s scheduled poll
+   - Still ~12s until ready flag
 
 2. **Polling unchanged**
    - Still 30s interval (ON and OFF)
    - Still detects external changes
-   - Polling does NOT use lock (by design)
+   - Polling uses lock (prevents race conditions)
 
 3. **App compatibility unchanged**
    - Still ~93% app availability
@@ -219,61 +242,59 @@ Follow the complete testing checklist: `TESTING_v1.7.0.md`
    rm -rf /config/custom_components/lexicon_av/__pycache__/
    ```
 2. Restart Home Assistant
-3. Check for syntax errors in `media_player.py`
+3. Check for syntax errors in files
 
 ---
 
-### Issue: "Could not connect" errors
+### Issue: "Could not connect" errors (v1.7.3 should fix this!)
 
 **Symptoms:**
 - Commands fail with connection errors
 - Logs show connection timeouts
 
-**Possible Causes:**
-1. **Receiver offline** → Check network/power
-2. **App connected** → Wait a few seconds, retry
-3. **Polling active** → Commands queue automatically (not an error!)
+**If this still happens in v1.7.3:**
+1. **Check receiver is online** → Ping 192.168.20.178
+2. **Enable debug logging** → See lock behavior
+3. **Report issue** → This shouldn't happen anymore!
 
 **Solution:**
 - Enable debug logging to see lock behavior
 - Commands should queue and execute when lock available
-- If persistent, rollback to v1.6.2 and report issue
+- If persistent in v1.7.3, report as bug!
 
 ---
 
 ### Issue: Commands seem slow
 
 **Symptoms:**
-- Commands take longer than v1.6.2
+- Commands take longer than expected
 - Volume changes delayed
 
 **Check:**
 1. Enable debug logging
 2. Look for lock contention (many operations queued)
-3. Check if polling frequency changed accidentally
+3. Check spacing between operations
 
 **Expected Performance:**
-- Commands: 0.4-0.5s (same as v1.6.2 best case)
-- Volume query: +0.3s after volume command (unchanged)
-- Input switch: +1s verification (unchanged)
+- Commands: 0.5s (consistent)
+- Volume query: +0.3s after volume command
+- Input switch: +1s verification
+- TCP cleanup: +50ms (not noticeable)
 
 ---
 
-### Issue: BluRay script times out
+### Issue: Script times out
 
 **Symptoms:**
-- Script timeout after 15 seconds
+- Music/Radio script timeout
 - ready flag doesn't become true
 
-**Check:**
-1. Scheduled poll running? (should run 9s after turn_on)
-2. Check logs for "[v1.7.0] Completed: turn_on"
-3. Check logs for scheduled poll 9s later
+**This should NOT happen in v1.7.3!**
 
-**Solution:**
-- This should NOT happen in v1.7.0 (fixed in v1.6.2)
-- If it does, report issue with full logs
-- Rollback to v1.6.2 if critical
+If it does:
+1. Check logs for lock messages
+2. Verify scheduled poll runs
+3. Report issue with full logs
 
 ---
 
@@ -297,7 +318,7 @@ Follow the complete testing checklist: `TESTING_v1.7.0.md`
 
 ## Rollback Procedure
 
-If v1.7.0 has issues, rollback to v1.6.2:
+If v1.7.3 has issues:
 
 **Step 1: Stop Home Assistant**
 ```bash
@@ -308,7 +329,7 @@ ha core stop
 ```bash
 cd /config/custom_components/
 rm -rf lexicon_av/
-cp -r lexicon_av.v1.6.2.backup/ lexicon_av/
+cp -r lexicon_av.backup/ lexicon_av/
 ```
 
 **Step 3: Clear cache**
@@ -332,11 +353,13 @@ ha core start
 
 ## Success Indicators
 
-**v1.7.0 is working correctly if:**
+**v1.7.3 is working correctly if:**
 
 ✅ Integration loads without errors  
 ✅ Basic functions work (power, volume, mute, source)  
-✅ BluRay script completes in ~10-11 seconds  
+✅ **Source switching works reliably (CRITICAL TEST!)**  
+✅ Music/Radio script completes successfully  
+✅ NO "Could not connect" errors  
 ✅ NO retry warnings in logs  
 ✅ Lock messages visible in debug logs: `[v1.7.0]`  
 ✅ Commands feel responsive (no 500ms delays)  
@@ -351,30 +374,32 @@ ha core start
 **Power ON:**
 - Command sent: ~1-2s
 - Boot complete: ~8s
-- Ready flag: ~9-10s
-- **Total: ~10s** (same as v1.6.2)
+- Scheduled poll: ~11s
+- Ready flag: ~12s
+- **Total: ~12s** (slightly slower than v1.6.2, but more reliable!)
 
 **Volume Up/Down:**
 - Command + verify: ~0.5s
-- **Faster than v1.6.2** (no 500ms retry on race conditions)
+- **Same as v1.6.2 best case** (no retry delays)
 
 **Set Volume:**
 - Command only: ~0.3s
-- **Faster than v1.6.2**
+- **Same as v1.6.2 best case**
 
 **Mute:**
 - Command only: ~0.2s
-- **Faster than v1.6.2**
+- **Same as v1.6.2 best case**
 
 **Select Source:**
 - Command + verify: ~1.2s
-- **Faster than v1.6.2**
+- **WORKS RELIABLY NOW!** ✅
 
 ### Lock Overhead
 
 - Lock acquisition: <1ms (negligible)
 - 100ms spacing: Prevents connection storms
-- Total overhead: ~100ms per operation (worth it for reliability!)
+- 50ms TCP cleanup: Ensures clean disconnects
+- Total overhead: ~150ms per operation (worth it for reliability!)
 
 ---
 
@@ -394,13 +419,37 @@ Then restart HA.
 
 **Look for:**
 ```
-[v1.7.0] Waiting for connection lock: volume_up
-[v1.7.0] Lock acquired: volume_up
-[v1.7.0] Spacing: waiting 0.050s before volume_up
-[v1.7.0] Executing: volume_up
-[v1.7.0] Completed: volume_up (result=True)
-[v1.7.0] Lock released: volume_up
+[v1.7.0] Waiting for connection lock: select_source
+[v1.7.0] Lock acquired: select_source
+[v1.7.0] Spacing: waiting 0.050s before select_source
+[v1.7.0] Executing: select_source
+Connected to Lexicon at 192.168.20.178:50000 ✅
+[v1.7.0] Completed: select_source (result=True)
+Disconnected from Lexicon
+[v1.7.0] Lock released: select_source
 ```
+
+---
+
+## What Changed in v1.7.3?
+
+### From v1.7.2 to v1.7.3:
+
+**File: `lexicon_protocol.py`**
+- Removed `_connection_lock` attribute from `__init__`
+- Removed lock wrapper from `connect()` method
+- Removed lock wrapper from `disconnect()` method
+- Added 50ms delay after TCP close in `disconnect()`
+
+**File: `manifest.json`**
+- Version bump: 1.7.2 → 1.7.3
+
+**File: `media_player.py`**
+- No changes (already correct!)
+
+**Why?**
+- Duplicate locks (media_player + protocol) caused race conditions
+- Single lock (media_player only) + TCP cleanup = reliable operation
 
 ---
 
@@ -408,8 +457,8 @@ Then restart HA.
 
 **Documentation:**
 - Full CHANGELOG: `CHANGELOG.md`
-- Testing Guide: `TESTING_v1.7.0.md`
-- Session Notes: `SESSION-SUMMARY.md`
+- Testing Guide: `TESTING_v1.7.3.md`
+- Bugfix Explanation: `BUGFIX_v1.7.3.md`
 
 **Support:**
 - GitHub Issues: Report bugs with logs
@@ -418,16 +467,16 @@ Then restart HA.
 
 ---
 
-## What's Next? (v1.7.1 / v1.8.0)
+## What's Next? (Future Versions)
 
 **Potential future enhancements:**
-- Polling uses lock (optional, not critical)
-- Scheduled poll for external OFF→ON detection
+- External OFF→ON detection (faster feedback)
 - Configurable spacing interval
 - Additional debug metrics
+- Performance monitoring
 
 **Current Status:**
-- v1.7.0 is **production ready** ✅
+- v1.7.3 is **production ready** ✅
 - No critical features missing
 - Stable and reliable
 
