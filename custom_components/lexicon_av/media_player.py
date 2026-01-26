@@ -10,7 +10,7 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 
@@ -190,6 +190,7 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         )
         _LOGGER.debug("Next poll in %ds", delay)
 
+    @callback
     def _trigger_poll(self, _=None):
         """Timer callback — triggers async poll."""
         self.hass.async_create_task(self._async_polling_update())

@@ -7,14 +7,18 @@ Home Assistant integration for Lexicon AV Receivers (RV-9, RV-6, MC-10) via RS23
 
 ## Features
 
-- ✅ Power control (On/Off via toggle)
-- ✅ Input source selection (13 inputs including DISPLAY)
-- ✅ Volume control (Up/Down)
-- ✅ Mute control (On/Off/Toggle)
-- ✅ Custom input naming
-- ✅ Config Flow UI (no YAML required)
-- ✅ Automatic reconnection on connection loss
-- ✅ HACS compatible
+- Power control (On/Off via toggle)
+- Input source selection (13 inputs including DISPLAY)
+- Volume control (Up/Down)
+- Mute control (On/Off/Toggle)
+- Custom input naming
+- State-aware polling (30s when ON, 60s when OFF)
+- Real power state detection (not toggle-based assumption)
+- Audio status attributes (format, decode mode, sample rate, direct mode)
+- Fast-fail architecture (1s timeout when receiver is OFF)
+- Connect-per-operation model (no persistent TCP connection)
+- Config Flow UI (no YAML required)
+- HACS compatible
 
 ## Supported Devices
 
@@ -224,10 +228,11 @@ Check logs:
 - Check that input names don't have typos
 - Use Configure button to edit mappings
 
-**Connection drops after inactivity:**
-- Integration automatically reconnects
-- Check your router doesn't drop idle TCP connections
-- Verify Lexicon network settings
+**Connection drops / Lexicon app loses control:**
+- The receiver supports only one TCP connection at a time
+- The integration connects briefly per poll cycle, then disconnects
+- If the Lexicon app loses connection, wait for the current poll to finish
+- Check `connection_status` attribute for diagnostics
 
 ### Integration Reload
 
@@ -237,6 +242,18 @@ If needed, reload the integration:
 
 ## Technical Details
 
+### Connection Model
+
+The receiver supports exactly one TCP connection at a time (newest wins).
+The integration uses a connect-per-operation model: each poll cycle or command
+opens a connection, executes queries, and disconnects. This minimizes connection
+hold time and avoids blocking other clients (e.g., the Lexicon app).
+
+| State | Poll Interval | Queries     | Connection Hold | Availability |
+|-------|---------------|-------------|-----------------|--------------|
+| ON    | 30s           | 9 (full)    | ~1.35s          | 95.5%        |
+| OFF   | 60s           | 1 (power)   | ~1.05s          | 98.2%        |
+
 ### RS232 Protocol
 
 - Port: 50000 (TCP/IP)
@@ -244,7 +261,7 @@ If needed, reload the integration:
 - Command: `0x21 0x01 0x08 0x02 <RC5_SYS> <RC5_CMD> 0x0D`
 - RC5 System: 0x10
 - Response: `0x21 0x02 0x02 0x00 <data> 0x0D` (0x00 = success)
-- Timeout: 3 seconds
+- Default timeout: 3 seconds (1 second for fast-fail power query)
 
 ### RC5 Commands
 
@@ -256,6 +273,19 @@ If needed, reload the integration:
 - Input CD: 0x76
 - Input DISPLAY: 0x3A
 - ...and more
+
+### Entity Attributes
+
+Standard `media_player` properties plus extra state attributes:
+
+- `ready` — receiver boot complete after power ON
+- `volume_int` — volume as integer 0-99 (for automations)
+- `audio_format` — current audio signal format
+- `decode_mode` — active decode mode (2ch/multichannel)
+- `sample_rate` — audio sample rate
+- `direct_mode` — stereo direct bypass status
+- `connection_status` — OK / Stale / Unknown
+- `last_update` — timestamp of last successful poll
 
 ## Updating
 
@@ -276,17 +306,9 @@ Configuration is preserved during updates.
 
 ## Support
 
-- **Issues:** [GitHub Issues](https://github.com/YOUR_USERNAME/lexicon-av-ha/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/YOUR_USERNAME/lexicon-av-ha/discussions)
-- **Documentation:** [Full Documentation](https://github.com/YOUR_USERNAME/lexicon-av-ha)
-
-## Roadmap
-
-**v1.2.0 (Planned):**
-- Status polling (every 30 seconds)
-- Sensor entities (current input, volume level, signal format, decode mode, sample rate)
-- Binary sensors (mute status, Room EQ, Stereo Direct)
-- Real power state (not toggle-based assumption)
+- **Issues:** [GitHub Issues](https://github.com/fink62/lexicon-av-ha/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/fink62/lexicon-av-ha/discussions)
+- **Documentation:** [Full Documentation](https://github.com/fink62/lexicon-av-ha)
 
 ## Credits
 

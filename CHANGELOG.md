@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.1] - 2026-01-26 - Threading Fix
+
+### Fixed
+
+- **`@callback` decorator on `_trigger_poll()`** — Without the decorator, Home Assistant's
+  `HassJob` ran the timer callback in an executor thread, where `hass.async_create_task()`
+  is not allowed. This caused a `RuntimeError` at startup and the polling coroutine was
+  never awaited. Adding `@callback` ensures the function runs on the event loop thread.
+
+### Changed
+
+- `media_player.py`: Added `callback` to `homeassistant.core` import
+- `media_player.py`: Added `@callback` decorator to `_trigger_poll()` method
+- `README.md`: Updated features, technical details, troubleshooting, and support URLs for v2.0.0
+
+---
+
 ## [2.0.0] - 2026-01-26 - State-Aware Fast-Fail Architecture
 
 ### Background — Empirical Investigation
@@ -328,7 +345,8 @@ Earlier versions not documented in this changelog.
 
 | Version | Date       | Status         | Key Change                            |
 |---------|------------|----------------|---------------------------------------|
-| 2.0.0   | 2026-01-26 | ✅ **CURRENT** | State-aware fast-fail architecture    |
+| 2.0.1   | 2026-01-26 | ✅ **CURRENT** | @callback threading fix               |
+| 2.0.0   | 2026-01-26 | ✅ Stable      | State-aware fast-fail architecture    |
 | 1.8.0   | 2026-01-25 | ✅ Stable      | Fixed 5s throttling → 100ms           |
 | 1.7.5   | 2026-01-25 | ❌ Failed      | TCP 200ms (wrong approach)            |
 | 1.7.4   | 2026-01-25 | ❌ Failed      | TCP 100ms (wrong approach)            |
@@ -443,6 +461,6 @@ A dedicated TCP timing test script was created to measure actual hardware behavi
 
 ---
 
-**Current Recommendation:** Use v2.0.0
+**Current Recommendation:** Use v2.0.1
 
 Last Updated: January 26, 2026
