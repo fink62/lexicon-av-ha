@@ -14,10 +14,15 @@
 **Requirement:** Lexicon mobile/desktop app must be usable ~95% of the time
 
 **Details:**
+- Integration operations are triggered by scripts or automations.
+- triggered by script: intentionally by using a "media control" dashboard - integration has precedence and can expect the app not to be used at the same time
+- triggered by automation: make sure receiver is on "TV ARC" source when starting Apple TV with the Apple TV remote and switching on devices (TV, receiver) via HDMI CEC (trigger: Apple TV state changes from Off to Idle) - this automation will also be triggered by the script - need to find a better trigger or just delay the switch operation.
+- after script completion, app should be able to take control again.
 - RC5 commands via app must work with minimal latency (<1s)
 - Connection must be released immediately after integration commands
 - Integration should minimize connection hold time
 - App connection attempts should succeed between integration operations
+
 
 **Success Criteria:**
 - App can connect within 5 seconds of trying

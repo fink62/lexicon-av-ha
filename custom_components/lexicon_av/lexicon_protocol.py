@@ -1,8 +1,11 @@
-"""Lexicon RS232/IP Protocol implementation with improved connection handling."""
+"""Lexicon RS232/IP Protocol implementation for connect-per-operation model.
+
+v2.0.0: Designed for single-TCP-connection receiver constraint.
+The caller (media_player.py) manages connect/disconnect lifecycle.
+"""
 import asyncio
 import logging
 from typing import Optional
-from datetime import datetime, timedelta
 
 from .const import (
     PROTOCOL_START,
@@ -41,9 +44,14 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class LexiconProtocol:
-    """Implements the Lexicon RS232/IP protocol with robust error handling."""
+    """Lexicon RS232/IP protocol for connect-per-operation model.
 
-    def __init__(self, host: str, port: int, timeout: int = 3):
+    The receiver supports exactly ONE TCP connection (newest wins).
+    Caller must manage connect()/disconnect() lifecycle to minimize
+    connection hold time and maximize app availability.
+    """
+
+    def __init__(self, host: str, port: int, timeout: float = 3.0):
         """Initialize the protocol handler."""
         self._host = host
         self._port = port
@@ -51,55 +59,29 @@ class LexiconProtocol:
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
-        
-        # Reconnect handling - minimal throttling (empirically tested: 50ms works)
-        self._reconnect_attempts = 0
-        self._max_reconnect_attempts = 5
-        self._last_reconnect_attempt: Optional[datetime] = None
-        self._min_reconnect_interval = timedelta(milliseconds=100)  # 100ms (tested on RV-9)
 
     async def connect(self) -> bool:
-        """Connect to the Lexicon receiver with connection state management."""
-        # Already connected
+        """Connect to the Lexicon receiver.
+
+        In connect-per-operation model, each poll/command cycle calls
+        connect() once, does its work, then disconnect().
+        No throttling needed — caller controls timing.
+        """
         if self._connected and self._writer and self._reader:
             return True
-        
-        # Check reconnect throttling
-        if self._last_reconnect_attempt:
-            time_since_last = datetime.now() - self._last_reconnect_attempt
-            if time_since_last < self._min_reconnect_interval:
-                _LOGGER.debug(
-                    "Reconnect throttled, waiting %.1fs",
-                    (self._min_reconnect_interval - time_since_last).total_seconds()
-                )
-                return False
-        
-        self._last_reconnect_attempt = datetime.now()
-        
+
         try:
             self._reader, self._writer = await asyncio.wait_for(
                 asyncio.open_connection(self._host, self._port),
                 timeout=self._timeout
             )
             self._connected = True
-            self._reconnect_attempts = 0
-            _LOGGER.info("Connected to Lexicon at %s:%s", self._host, self._port)
+            _LOGGER.debug("Connected to Lexicon at %s:%s", self._host, self._port)
             return True
-            
+
         except (asyncio.TimeoutError, OSError) as err:
-            self._reconnect_attempts += 1
             self._connected = False
-            
-            if self._reconnect_attempts >= self._max_reconnect_attempts:
-                _LOGGER.error(
-                    "Failed to connect after %d attempts: %s",
-                    self._reconnect_attempts, err
-                )
-            else:
-                _LOGGER.warning(
-                    "Connection attempt %d/%d failed: %s",
-                    self._reconnect_attempts, self._max_reconnect_attempts, err
-                )
+            _LOGGER.warning("Connection failed: %s", err)
             return False
 
     async def disconnect(self):
@@ -116,36 +98,40 @@ class LexiconProtocol:
         self._connected = False
         self._reader = None
         self._writer = None
-        _LOGGER.info("Disconnected from Lexicon")
+        _LOGGER.debug("Disconnected from Lexicon")
 
-    async def _read_frame(self) -> Optional[bytes]:
-        """
-        Read a complete protocol frame with proper parsing.
-        
+    async def _read_frame(self, timeout: Optional[float] = None) -> Optional[bytes]:
+        """Read a complete protocol frame.
+
         Frame format: <Start> <Zone> <Cmd> <Answer> <DataLen> <Data...> <End>
-        Returns complete frame or None on error.
+
+        Args:
+            timeout: Override timeout in seconds. None uses self._timeout.
+
+        Returns: Complete frame bytes, or None on error/timeout.
         """
         if not self._reader:
             return None
-        
+
+        t = timeout if timeout is not None else self._timeout
+
         try:
             # Read frame header (5 bytes): Start, Zone, Cmd, Answer, DataLen
             header = await asyncio.wait_for(
                 self._reader.readexactly(5),
-                timeout=self._timeout
+                timeout=t
             )
-            
+
             if header[0] != PROTOCOL_START:
                 _LOGGER.warning("Invalid frame start: 0x%02X", header[0])
                 return None
-            
-            # Extract data length
+
             data_len = header[4]
-            
+
             # Read data + end byte
             remaining = await asyncio.wait_for(
                 self._reader.readexactly(data_len + 1),
-                timeout=self._timeout
+                timeout=t
             )
             
             # Verify end byte
@@ -191,34 +177,33 @@ class LexiconProtocol:
             PROTOCOL_END
         ])
 
-    async def _ensure_connection(self) -> bool:
-        """Ensure connection is established, reconnect if needed."""
-        if not self._connected or not self._writer or not self._reader:
-            _LOGGER.debug("Connection lost, attempting reconnect...")
-            return await self.connect()
-        return True
 
     async def _send_command(self, command: bytes) -> bool:
-        """Send a command and wait for response with auto-reconnect."""
-        if not await self._ensure_connection():
+        """Send an RC5 command and wait for response.
+
+        After a successful RC5 response, drains any unsolicited echo
+        frames the receiver may push (e.g. volume/source status updates).
+
+        Caller must ensure connection is established before calling.
+        """
+        if not self._connected or not self._writer:
             return False
 
         try:
-            # Send command
             self._writer.write(command)
             await self._writer.drain()
             _LOGGER.debug("Sent command: %s", command.hex())
 
-            # Read response frame
             response = await self._read_frame()
             if not response:
                 _LOGGER.warning("No response received")
                 self._connected = False
                 return False
 
-            # Check response (Answer Code should be 0x00 for success)
             if len(response) >= 6 and response[3] == PROTOCOL_ANSWER_OK:
                 _LOGGER.debug("Command successful")
+                # Drain unsolicited echo frames after RC5 commands
+                await self._drain_unsolicited()
                 return True
             else:
                 _LOGGER.warning("Unexpected response: %s", response.hex())
@@ -228,49 +213,38 @@ class LexiconProtocol:
             _LOGGER.error("Communication error: %s", err)
             self._connected = False
             await self._cleanup_connection()
-            
-            # Single retry attempt
-            _LOGGER.info("Attempting immediate reconnect...")
-            if await self.connect():
-                try:
-                    self._writer.write(command)
-                    await self._writer.drain()
-                    response = await self._read_frame()
-                    if response and len(response) >= 6 and response[3] == PROTOCOL_ANSWER_OK:
-                        _LOGGER.info("Command successful after reconnect")
-                        return True
-                except Exception as retry_err:
-                    _LOGGER.error("Retry failed: %s", retry_err)
-            
             return False
 
-    async def _send_query(self, command: bytes) -> Optional[bytes]:
-        """Send a query command and return the response data."""
-        if not await self._ensure_connection():
+    async def _send_query(self, command: bytes, timeout: Optional[float] = None) -> Optional[bytes]:
+        """Send a query command and return the response data.
+
+        Args:
+            command: The query command bytes to send.
+            timeout: Override timeout in seconds. None uses self._timeout.
+                     Use a short timeout (e.g. 1.0) for fast-fail on first query.
+
+        Returns: Response data bytes, or None on timeout/error.
+
+        Note: A timeout does NOT mark the connection as broken — the receiver
+        may simply be OFF or booting. The caller decides whether to abort.
+        """
+        if not self._connected or not self._writer:
             return None
 
         try:
-            # Send command
             self._writer.write(command)
             await self._writer.drain()
             _LOGGER.debug("Sent query: %s", command.hex())
 
-            # Read response frame
-            response = await self._read_frame()
+            response = await self._read_frame(timeout=timeout)
             if not response:
-                _LOGGER.warning("No query response received")
-                # NOTE: Do NOT set _connected = False here!
-                # Connection is still valid, receiver just didn't respond
-                # (e.g. OFF, booting, or busy). Setting False here causes
-                # unnecessary reconnects for every query in a poll cycle.
+                # Connection still valid — receiver may be OFF/booting
                 return None
 
-            # Parse response: <Start> <Zone> <Cmd> <Answer> <DataLen> <Data...> <End>
             if len(response) >= 6 and response[3] == PROTOCOL_ANSWER_OK:
                 data_length = response[4]
                 if len(response) >= 5 + data_length + 1:
-                    # Extract data bytes (skip Start, Zone, Cmd, Answer, DataLen; stop before End)
-                    data = response[5:5+data_length]
+                    data = response[5:5 + data_length]
                     _LOGGER.debug("Query successful, data: %s", data.hex())
                     return data
                 else:
@@ -286,38 +260,6 @@ class LexiconProtocol:
             await self._cleanup_connection()
             return None
 
-    async def _send_query_with_retry(self, command: bytes) -> Optional[bytes]:
-        """
-        Send query with automatic retry on connection error.
-        
-        Tries once, if fails: disconnect, wait, reconnect, retry once more.
-        This improves reliability for transient connection issues.
-        """
-        try:
-            return await self._send_query(command)
-        except (ConnectionError, OSError, BrokenPipeError) as err:
-            _LOGGER.warning("Query failed: %s - Attempting reconnect and retry", err)
-            
-            # Clean disconnect
-            try:
-                await self.disconnect()
-            except Exception:
-                pass  # Ignore disconnect errors
-            
-            # Brief pause before reconnect
-            await asyncio.sleep(0.5)
-            
-            # Reconnect and retry
-            if await self.connect():
-                _LOGGER.info("Reconnected successfully, retrying query")
-                try:
-                    return await self._send_query(command)
-                except Exception as retry_err:
-                    _LOGGER.error("Retry also failed: %s", retry_err)
-                    return None
-            else:
-                _LOGGER.error("Reconnect failed, giving up")
-                return None
 
     async def _cleanup_connection(self):
         """Clean up broken connection without holding the lock."""
@@ -329,6 +271,39 @@ class LexiconProtocol:
             pass
         self._reader = None
         self._writer = None
+
+    async def _drain_unsolicited(self) -> int:
+        """Drain unsolicited status frames from the reader buffer.
+
+        After RC5 commands, the receiver pushes echo frames (e.g. volume
+        change confirmation with Cc=0x08). These must be consumed to
+        prevent stream corruption on subsequent queries.
+
+        Returns: Number of frames drained.
+        """
+        if not self._reader:
+            return 0
+
+        drained = 0
+        while True:
+            try:
+                header = await asyncio.wait_for(
+                    self._reader.readexactly(5), timeout=0.2
+                )
+                if header[0] != PROTOCOL_START:
+                    break
+                data_len = header[4]
+                await asyncio.wait_for(
+                    self._reader.readexactly(data_len + 1), timeout=0.5
+                )
+                drained += 1
+                _LOGGER.debug("Drained unsolicited frame (cmd=0x%02X)", header[2])
+            except (asyncio.TimeoutError, asyncio.IncompleteReadError, OSError):
+                break
+
+        if drained > 0:
+            _LOGGER.debug("Drained %d unsolicited frame(s)", drained)
+        return drained
 
     # ==================== Control Commands ====================
 
@@ -431,13 +406,16 @@ class LexiconProtocol:
 
     # ==================== Status Query Commands ====================
 
-    async def get_power_state(self) -> Optional[bool]:
-        """
-        Query power state.
-        Returns: True = on, False = standby, None = error
+    async def get_power_state(self, timeout: Optional[float] = None) -> Optional[bool]:
+        """Query power state.
+
+        Args:
+            timeout: Override timeout (seconds). Use 1.0 for fast-fail.
+
+        Returns: True = on, False = standby, None = no response.
         """
         command = self._build_query_command(PROTOCOL_CMD_POWER)
-        data = await self._send_query_with_retry(command)
+        data = await self._send_query(command, timeout=timeout)
         
         if data and len(data) >= 1:
             power_state = data[0]
@@ -458,7 +436,7 @@ class LexiconProtocol:
         Returns: Volume (0-99), None = error
         """
         command = self._build_query_command(PROTOCOL_CMD_VOLUME)
-        data = await self._send_query_with_retry(command)
+        data = await self._send_query(command)
         
         if data and len(data) >= 1:
             volume = data[0]
@@ -472,7 +450,7 @@ class LexiconProtocol:
         Returns: True = muted, False = not muted, None = error
         """
         command = self._build_query_command(PROTOCOL_CMD_MUTE)
-        data = await self._send_query_with_retry(command)
+        data = await self._send_query(command)
         
         if data and len(data) >= 1:
             mute_state = data[0]
@@ -488,7 +466,7 @@ class LexiconProtocol:
         Returns: Source name (e.g., "BD", "CD"), None = error
         """
         command = self._build_query_command(PROTOCOL_CMD_CURRENT_SOURCE)
-        data = await self._send_query_with_retry(command)
+        data = await self._send_query(command)
         
         if data and len(data) >= 1:
             source_code = data[0]
@@ -504,7 +482,7 @@ class LexiconProtocol:
         Returns: True = on, False = off, None = error
         """
         command = self._build_query_command(PROTOCOL_CMD_DIRECT_MODE)
-        data = await self._send_query_with_retry(command)
+        data = await self._send_query(command)
         
         if data and len(data) >= 1:
             direct_mode = data[0]
@@ -514,32 +492,35 @@ class LexiconProtocol:
             return is_direct
         return None
 
-    async def get_decode_mode(self) -> Optional[str]:
+    async def get_decode_2ch(self) -> Optional[str]:
+        """Query 2-channel decode mode.
+
+        Returns: Decode mode name (e.g. "Stereo", "Dolby Surround"), or None.
         """
-        Query decode mode (tries 2ch first, then MCH).
-        Returns: Decode mode name (e.g., "Stereo", "Dolby Surround"), None = error
-        """
-        # Try 2-channel decode mode first
         command = self._build_query_command(PROTOCOL_CMD_DECODE_2CH)
         data = await self._send_query(command)
-        
+
         if data and len(data) >= 1:
             mode_code = data[0]
             mode_name = DECODE_MODE_2CH.get(mode_code)
             if mode_name:
                 _LOGGER.debug("Decode mode (2ch): %s (code: 0x%02X)", mode_name, mode_code)
                 return mode_name
-        
-        # Try multi-channel decode mode
+        return None
+
+    async def get_decode_mch(self) -> Optional[str]:
+        """Query multi-channel decode mode.
+
+        Returns: Decode mode name (e.g. "Multi-Channel", "DTS Neural:X"), or None.
+        """
         command = self._build_query_command(PROTOCOL_CMD_DECODE_MCH)
         data = await self._send_query(command)
-        
+
         if data and len(data) >= 1:
             mode_code = data[0]
             mode_name = DECODE_MODE_MCH.get(mode_code, f"UNKNOWN_0x{mode_code:02X}")
             _LOGGER.debug("Decode mode (MCH): %s (code: 0x%02X)", mode_name, mode_code)
             return mode_name
-        
         return None
 
     async def get_audio_format(self) -> Optional[str]:
@@ -572,29 +553,7 @@ class LexiconProtocol:
             return rate_name
         return None
 
-    async def heartbeat(self) -> bool:
-        """
-        Send heartbeat to verify connection is alive.
-        Uses command 0x25.
-        
-        Returns: True if receiver responds, False otherwise
-        """
-        command = self._build_query_command(PROTOCOL_CMD_HEARTBEAT)
-        data = await self._send_query_with_retry(command)
-        
-        if data is not None:
-            _LOGGER.debug("❤️ Heartbeat OK")
-            return True
-        else:
-            _LOGGER.warning("💔 Heartbeat failed")
-            return False
-
     @property
     def is_connected(self) -> bool:
         """Return connection status."""
         return self._connected
-
-    @property
-    def reconnect_attempts(self) -> int:
-        """Return number of reconnect attempts."""
-        return self._reconnect_attempts

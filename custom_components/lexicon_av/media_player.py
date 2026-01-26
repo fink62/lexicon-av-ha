@@ -12,7 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_time_interval, async_call_later
+from homeassistant.helpers.event import async_call_later
 
 from .const import (
     DOMAIN,
@@ -20,15 +20,14 @@ from .const import (
     CONF_INPUT_MAPPINGS,
     DEFAULT_PORT,
     DEFAULT_NAME,
-    DEFAULT_SCAN_INTERVAL,
     LEXICON_INPUTS,
 )
 from .lexicon_protocol import LexiconProtocol
 
-# Polling intervals
-SCAN_INTERVAL_ON = 30      # 30 seconds when device is on
-SCAN_INTERVAL_OFF = 30     # 30 seconds when device is off (was 120 - too slow!)
-SCAN_INTERVAL_STARTUP = 5  # 5 seconds for first few polls after startup
+# Polling intervals (state-aware v2.0.0)
+SCAN_INTERVAL_ON = 30       # 30s when receiver is ON (full query set)
+SCAN_INTERVAL_OFF = 60      # 60s when receiver is OFF (power query only)
+SCAN_INTERVAL_STARTUP = 5   # 5s delay before first poll
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,9 +108,9 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         self._ready = False  # Indicates if receiver is fully operational
         self._last_successful_poll = None  # Track last successful query timestamp
 
-        # Connection lock (v1.7.0) - Prevents race conditions between polling and commands
+        # Connection lock — prevents race conditions between polling and commands
         self._connection_lock = asyncio.Lock()
-        self._last_operation = None  # Timestamp of last operation for minimum spacing
+        self._last_operation = None  # Timestamp of last disconnect
 
         # Set unique ID
         self._attr_unique_id = f"lexicon_av_{protocol._host}"
@@ -125,64 +124,43 @@ class LexiconMediaPlayer(MediaPlayerEntity):
     async def async_added_to_hass(self) -> None:
         """Run when entity is added to hass - start polling."""
         await super().async_added_to_hass()
-        
-        # Start fixed 30s polling (connection per poll cycle)
-        _LOGGER.info("Starting status polling every 30s (connect/disconnect per cycle)")
-        self._cancel_polling = async_track_time_interval(
-            self.hass,
-            self._async_polling_update,
-            timedelta(seconds=30),
-        )
+
+        # Schedule first poll after startup delay
+        _LOGGER.info("Starting state-aware polling (ON=%ds, OFF=%ds)",
+                     SCAN_INTERVAL_ON, SCAN_INTERVAL_OFF)
+        self._schedule_next_poll(SCAN_INTERVAL_STARTUP)
 
     async def _execute_with_connection(self, operation_func, operation_name: str):
-        """Central connection manager with lock (v1.7.0).
-        
+        """Execute an operation within a connect/disconnect lifecycle.
+
         Ensures:
-        - Only one operation at a time (Lock prevents race conditions)
-        - Minimum 100ms spacing between operations
-        - Clean connect/disconnect lifecycle
-        - Proper error handling with logging
-        
+        - Only one operation at a time (lock prevents race with polling)
+        - Clean connect/disconnect lifecycle per operation
+        - Minimal connection hold time for app availability
+
         Args:
-            operation_func: Async function to execute (lambda or method)
-            operation_name: Name for logging purposes (e.g. "turn_on", "volume_up")
-            
+            operation_func: Async function to execute while connected.
+            operation_name: Name for logging (e.g. "turn_on", "volume_up").
+
         Returns:
-            Result from operation_func, or None on error
+            Result from operation_func, or None on error.
         """
-        _LOGGER.debug("[v1.7.0] Waiting for connection lock: %s", operation_name)
-        
         async with self._connection_lock:
-            _LOGGER.debug("[v1.7.0] Lock acquired: %s", operation_name)
-            
             try:
-                # Ensure minimum spacing between operations
-                if self._last_operation:
-                    elapsed = (datetime.now() - self._last_operation).total_seconds()
-                    if elapsed < 0.1:
-                        wait_time = 0.1 - elapsed
-                        _LOGGER.debug("[v1.7.0] Spacing: waiting %.3fs before %s", wait_time, operation_name)
-                        await asyncio.sleep(wait_time)
-                
-                # Connect
                 if not await self._protocol.connect():
-                    _LOGGER.error("[v1.7.0] Could not connect for %s", operation_name)
+                    _LOGGER.error("Could not connect for %s", operation_name)
                     return None
-                
+
                 try:
-                    # Execute operation
-                    _LOGGER.debug("[v1.7.0] Executing: %s", operation_name)
+                    _LOGGER.debug("Executing: %s", operation_name)
                     result = await operation_func()
-                    _LOGGER.debug("[v1.7.0] Completed: %s (result=%s)", operation_name, result)
                     return result
                 finally:
-                    # Always disconnect
                     await self._protocol.disconnect()
                     self._last_operation = datetime.now()
-                    _LOGGER.debug("[v1.7.0] Lock released: %s", operation_name)
-                    
+
             except Exception as e:
-                _LOGGER.error("[v1.7.0] Error in %s: %s", operation_name, e, exc_info=True)
+                _LOGGER.error("Error in %s: %s", operation_name, e, exc_info=True)
                 return None
 
     async def async_will_remove_from_hass(self) -> None:
@@ -198,203 +176,155 @@ class LexiconMediaPlayer(MediaPlayerEntity):
         await self._protocol.disconnect()
         _LOGGER.info("Entity removed, connection closed")
 
-    def _trigger_poll_after_boot(self, _=None):
-        """Trigger poll after boot (safe callback for async_call_later)."""
-        # Use add_job to safely schedule async task from timer callback
-        self.hass.add_job(self._async_polling_update())
+    def _schedule_next_poll(self, delay: int) -> None:
+        """Schedule the next poll after delay seconds.
+
+        Uses async_call_later for dynamic intervals based on receiver state:
+        - ON:  30s (need timely status updates)
+        - OFF: 60s (power check only, minimize overhead)
+        """
+        if self._cancel_polling:
+            self._cancel_polling()
+        self._cancel_polling = async_call_later(
+            self.hass, delay, self._trigger_poll
+        )
+        _LOGGER.debug("Next poll in %ds", delay)
+
+    def _trigger_poll(self, _=None):
+        """Timer callback — triggers async poll."""
+        self.hass.async_create_task(self._async_polling_update())
 
     async def _async_polling_update(self, now=None) -> None:
-        """Periodic status update (called by timer)."""
+        """Periodic status update with state-aware rescheduling."""
         self._poll_count += 1
-        _LOGGER.debug("Polling update #%d triggered", self._poll_count)
-        
-        # Store previous state to detect changes
-        previous_state = self._state
-        
-        # Update status
+        _LOGGER.debug("Poll #%d triggered", self._poll_count)
+
         await self._async_update_status()
-        
-        # Note: Do NOT call _schedule_next_poll() here!
-        # async_track_time_interval already handles repetition.
-        # Calling _schedule_next_poll() would create duplicate timers (timer leak)!
+
+        # Schedule next poll based on current state
+        interval = SCAN_INTERVAL_ON if self._state == MediaPlayerState.ON else SCAN_INTERVAL_OFF
+        self._schedule_next_poll(interval)
 
     async def _async_update_status(self) -> None:
-        """Query receiver status and update entity state with value caching."""
-        
-        # Use lock to prevent interference with commands (v1.7.0)
-        _LOGGER.debug("[v1.7.0] Waiting for connection lock: polling_update")
+        """Query receiver status with fast-fail and state-aware queries.
+
+        v2.0.0 strategy:
+        1. Connect (evicts app — hold time must be minimal)
+        2. Power query with fast-fail (1s timeout)
+           - None → receiver unreachable, abort immediately (~1.05s hold)
+           - False → standby, done (~0.19s hold)
+           - True → query full status (~1.35s hold)
+        3. Disconnect (app can reconnect)
+
+        Connection hold time budget:
+        - ON:  ~1.35s / 30s = 95.5% app availability
+        - OFF: ~1.05s / 60s = 98.2% app availability
+        """
         async with self._connection_lock:
-            _LOGGER.debug("[v1.7.0] Lock acquired: polling_update")
-            
-            # Ensure minimum spacing from last operation
-            if self._last_operation:
-                elapsed = (datetime.now() - self._last_operation).total_seconds()
-                if elapsed < 0.1:
-                    wait_time = 0.1 - elapsed
-                    _LOGGER.debug("[v1.7.0] Spacing: waiting %.3fs before polling", wait_time)
-                    await asyncio.sleep(wait_time)
-            
             # Connect for this poll cycle
-            _LOGGER.debug("=== Poll #%d: Connecting ===", self._poll_count)
             if not await self._protocol.connect():
-                _LOGGER.warning("⚠️ Could not connect for poll #%d (App using receiver?)", self._poll_count)
-                # Keep cached values, mark as not ready
+                _LOGGER.warning("Could not connect for poll #%d", self._poll_count)
                 self._ready = False
                 self._state = MediaPlayerState.OFF
                 self.async_write_ha_state()
-                _LOGGER.debug("[v1.7.0] Lock released: polling_update (connection failed)")
                 return
-            
+
             try:
-                _LOGGER.debug("=== Status update poll #%d ===", self._poll_count)
-                
-                # Track if ANY query succeeded (for cache timestamp)
-                queries_succeeded = False
-            
-                # STEP 1: Query power state (with boot protection)
+                # --- FAST-FAIL: Power query first ---
                 power_state = None
                 if self._power_transition_until and datetime.now() < self._power_transition_until:
-                    # During boot transition: use optimistic state (don't query, receiver is booting!)
+                    # Boot transition: use optimistic state
                     power_state = (self._state == MediaPlayerState.ON)
                     remaining = (self._power_transition_until - datetime.now()).total_seconds()
-                    _LOGGER.debug("Boot transition active (%.1fs remaining), using optimistic state: %s", 
-                                remaining, power_state)
+                    _LOGGER.debug("Boot transition (%.1fs remaining), optimistic ON", remaining)
                 else:
-                    # Normal operation: query actual power state
-                    power_state = await self._protocol.get_power_state()
-                    _LOGGER.debug("Power query result: %s", power_state)
-            
-                # STEP 2: Query all status (always, regardless of power)
-                # CACHING: Only update if query succeeds, keep old value on failure
+                    power_state = await self._protocol.get_power_state(timeout=1.0)
+
+                if power_state is None:
+                    # Receiver not responding — fast-fail, abort entire cycle
+                    _LOGGER.debug("Power query timeout — receiver OFF/unreachable")
+                    self._state = MediaPlayerState.OFF
+                    self._ready = False
+                    self.async_write_ha_state()
+                    return
+
+                if not power_state:
+                    # Receiver in standby — no further queries needed
+                    self._state = MediaPlayerState.OFF
+                    self._ready = False
+                    self._power_transition_until = None
+                    self._audio_format = None
+                    self._decode_mode = None
+                    self._sample_rate = None
+                    self._direct_mode = None
+                    self.async_write_ha_state()
+                    return
+
+                # --- Receiver is ON: full query set ---
+
+                # Detect OFF → ON transition
+                if self._state == MediaPlayerState.OFF:
+                    _LOGGER.info("State changed: OFF -> ON (boot stabilization 10s)")
+                    self._power_transition_until = datetime.now() + timedelta(seconds=10)
+                    self._ready = False
+                self._state = MediaPlayerState.ON
+
+                # Core status queries (cached on failure)
                 volume = await self._protocol.get_volume()
                 if volume is not None:
                     self._volume_level = round(volume / 99.0, 2)
-                    queries_succeeded = True
-                    _LOGGER.debug("Volume: %d -> %.2f", volume, self._volume_level)
-                # else: keep old _volume_level value
-            
+
                 mute = await self._protocol.get_mute_state()
                 if mute is not None:
                     self._is_volume_muted = mute
-                    queries_succeeded = True
-                    _LOGGER.debug("Mute: %s", mute)
-                # else: keep old _is_volume_muted value
-            
+
                 source = await self._protocol.get_current_source()
                 if source is not None:
-                    # Map to custom name if exists, show physical in brackets
                     if source in self._physical_to_name:
                         custom_name = self._physical_to_name[source]
                         self._current_source = f"{custom_name} ({source})"
-                        _LOGGER.debug("Source: %s -> %s (%s)", source, custom_name, source)
                     else:
                         self._current_source = source
-                        _LOGGER.debug("Source: %s (no mapping)", source)
-                    queries_succeeded = True
-                # else: keep old _current_source value
-            
-                # STEP 3: Determine power state with fallback
-                if power_state is not None:
-                    # Trust power query
-                    if power_state:
-                        # Detect OFF → ON transition for relay timing
-                        if self._state == MediaPlayerState.OFF:
-                            _LOGGER.info("🔌 State changed: OFF → ON (relay clicks at ~6s, stabilization buffer until 10s)")
-                            self._power_transition_until = datetime.now() + timedelta(seconds=10)
-                            self._ready = False
-                        self._state = MediaPlayerState.ON
-                    else:
-                        self._state = MediaPlayerState.OFF
-                        self._ready = False
-                        self._power_transition_until = None
-                        # Only clear audio when transitioning to OFF
-                        self._audio_format = None
-                        self._decode_mode = None
-                        self._sample_rate = None
-                        self._direct_mode = None
-                elif volume is not None or source is not None:
-                    # Power query failed but got data -> assume ON
-                    self._state = MediaPlayerState.ON
-                    _LOGGER.info("Power query failed, but got volume/source -> assuming ON")
+
+                # Audio status queries
+                audio_format = await self._protocol.get_audio_format()
+                if audio_format:
+                    self._audio_format = audio_format
+
+                # Decode mode: query 2ch and MCH separately (1 query each)
+                decode_2ch = await self._protocol.get_decode_2ch()
+                decode_mch = await self._protocol.get_decode_mch()
+                if decode_2ch:
+                    self._decode_mode = decode_2ch
+                elif decode_mch:
+                    self._decode_mode = decode_mch
+
+                sample_rate = await self._protocol.get_sample_rate()
+                if sample_rate:
+                    self._sample_rate = sample_rate
+
+                direct_mode = await self._protocol.get_direct_mode()
+                if direct_mode is not None:
+                    self._direct_mode = direct_mode
+
+                # Ready status check
+                if self._verify_receiver_stable():
+                    if not self._ready:
+                        _LOGGER.info("Receiver READY and STABLE")
+                    self._ready = True
+                    self._power_transition_until = None
                 else:
-                    # All failed -> assume OFF, but keep cached attributes visible
-                    self._state = MediaPlayerState.OFF
-                    _LOGGER.warning("All queries failed -> assuming OFF (cached values retained)")
-            
-                # STEP 4: Query audio status ONLY if ON
-                # CACHING: Only update if query succeeds
-                if self._state == MediaPlayerState.ON:
-                    audio_format = await self._protocol.get_audio_format()
-                    if audio_format:
-                        self._audio_format = audio_format
-                        queries_succeeded = True
-                    # else: keep old _audio_format
-                
-                    decode_mode = await self._protocol.get_decode_mode()
-                    if decode_mode:
-                        self._decode_mode = decode_mode
-                        queries_succeeded = True
-                    # else: keep old _decode_mode
-                
-                    sample_rate = await self._protocol.get_sample_rate()
-                    if sample_rate:
-                        self._sample_rate = sample_rate
-                        queries_succeeded = True
-                    # else: keep old _sample_rate
-                
-                    direct_mode = await self._protocol.get_direct_mode()
-                    if direct_mode is not None:
-                        self._direct_mode = direct_mode
-                        queries_succeeded = True
-                    # else: keep old _direct_mode
-            
-                # STEP 5: Set ready status with comprehensive stability check
-                if self._state == MediaPlayerState.ON and (volume is not None or source is not None):
-                    # Use comprehensive stability check
-                    if self._verify_receiver_stable():
-                        if not self._ready:
-                            _LOGGER.info("✅ Receiver READY and STABLE - input switching available")
-                        self._ready = True
-                        self._power_transition_until = None  # Clear transition timer
-                    else:
-                        # Still in boot/stabilization phase
-                        if self._power_transition_until:
-                            elapsed = (datetime.now() - (self._power_transition_until - timedelta(seconds=10))).total_seconds()
-                            remaining = (self._power_transition_until - datetime.now()).total_seconds()
-                            _LOGGER.info("⏳ Boot sequence: %.1fs elapsed, relay at ~6s, stabilizing (%.1fs until ready)",
-                                        elapsed, remaining)
-                        self._ready = False
-                else:
-                    if self._ready:
-                        _LOGGER.info("❌ Receiver is NOT READY")
                     self._ready = False
-            
-                # Track last successful poll timestamp
-                if queries_succeeded:
-                    self._last_successful_poll = datetime.now()
-                    _LOGGER.debug("✅ Poll succeeded, values cached at %s", 
-                                self._last_successful_poll.strftime("%H:%M:%S"))
-                else:
-                    _LOGGER.warning("⚠️ All queries failed, keeping cached values")
-            
-                _LOGGER.debug(
-                    "Poll complete: state=%s ready=%s vol=%.2f mute=%s src=%s",
-                    self._state, self._ready, 
-                    self._volume_level if self._volume_level else 0.0,
-                    self._is_volume_muted, self._current_source
-                )
-            
+
+                self._last_successful_poll = datetime.now()
                 self.async_write_ha_state()
-            
+
             except Exception as err:
                 _LOGGER.error("Status update error: %s", err, exc_info=True)
                 self._ready = False
             finally:
-                # ALWAYS disconnect after poll
-                _LOGGER.debug("=== Poll #%d: Disconnecting ===", self._poll_count)
                 await self._protocol.disconnect()
                 self._last_operation = datetime.now()
-                _LOGGER.debug("[v1.7.0] Lock released: polling_update")
 
     def _verify_receiver_stable(self) -> bool:
         """Verify receiver is in stable operational state.
@@ -517,8 +447,7 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             if await self._protocol.power_on():
                 _LOGGER.info("Power ON command sent successfully")
                 # Schedule poll in 11s (after 10s boot timer + 1s margin) to set ready flag
-                async_call_later(self.hass, 11, self._trigger_poll_after_boot)
-                _LOGGER.debug("Scheduled poll in 11s to update ready flag")
+                self._schedule_next_poll(11)
                 return True
             else:
                 self._state = MediaPlayerState.OFF
@@ -528,7 +457,6 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 _LOGGER.error("Failed to turn ON - check connection and RS232 Control setting")
                 return False
         
-        # Use lock-protected connection manager (v1.7.0)
         result = await self._execute_with_connection(do_power_on, "turn_on")
         if not result:
             _LOGGER.error("Power ON failed")
@@ -556,7 +484,6 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 _LOGGER.error("Failed to turn OFF - check connection and RS232 Control setting")
                 return False
         
-        # Use lock-protected connection manager (v1.7.0)
         result = await self._execute_with_connection(do_power_off, "turn_off")
         if not result:
             _LOGGER.error("Power OFF failed")
@@ -575,7 +502,6 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 return True
             return False
         
-        # Use lock-protected connection manager (v1.7.0) - NO RETRY NEEDED!
         await self._execute_with_connection(do_volume_up, "volume_up")
 
     async def async_volume_down(self) -> None:
@@ -592,7 +518,6 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 return True
             return False
         
-        # Use lock-protected connection manager (v1.7.0) - NO RETRY NEEDED!
         await self._execute_with_connection(do_volume_down, "volume_down")
 
     async def async_set_volume_level(self, volume: float) -> None:
@@ -612,7 +537,6 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 _LOGGER.error("Failed to set volume")
                 return False
         
-        # Use lock-protected connection manager (v1.7.0) - NO RETRY NEEDED!
         await self._execute_with_connection(do_set_volume, "set_volume")
 
     async def async_mute_volume(self, mute: bool) -> None:
@@ -628,7 +552,6 @@ class LexiconMediaPlayer(MediaPlayerEntity):
             self.async_write_ha_state()
             return True
         
-        # Use lock-protected connection manager (v1.7.0) - NO RETRY NEEDED!
         await self._execute_with_connection(do_mute, "mute_volume")
 
     async def async_select_source(self, source: str) -> None:
@@ -683,7 +606,6 @@ class LexiconMediaPlayer(MediaPlayerEntity):
                 return True
             return False
         
-        # Use lock-protected connection manager (v1.7.0) - NO RETRY NEEDED!
         await self._execute_with_connection(do_select_source, "select_source")
 
     async def async_update(self) -> None:

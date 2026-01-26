@@ -8,8 +8,6 @@ Control your Lexicon AV Receiver (RV-6, RV-9, MC-10) directly from Home Assistan
 - ✅ Volume control (up/down/mute/set level)
 - ✅ Input switching with custom names
 - ✅ Ready state detection (~10s after power ON)
-- ✅ Lock-based connection management (v1.7.0+)
-- ✅ Automatic state polling (30s interval)
 
 ## Installation via HACS
 
@@ -26,6 +24,7 @@ Control your Lexicon AV Receiver (RV-6, RV-9, MC-10) directly from Home Assistan
 - **Host:** IP address of your receiver (e.g., 192.168.1.50)
 - **Port:** 50000 (default)
 - **Name:** Friendly name for the media player entity
+- **Input mappings** Enter your custom input names
 
 ## Supported Models
 
@@ -36,10 +35,10 @@ Control your Lexicon AV Receiver (RV-6, RV-9, MC-10) directly from Home Assistan
 
 ## Documentation
 
-- [Full README](https://github.com/YOUR_USERNAME/lexicon-av-ha/blob/main/README.md)
-- [Changelog](https://github.com/YOUR_USERNAME/lexicon-av-ha/blob/main/CHANGELOG.md)
-- [Testing Guide](https://github.com/YOUR_USERNAME/lexicon-av-ha/blob/main/TESTING_v1.7.0.md)
+- [Full README](https://github.com/fink62/lexicon-av-ha/blob/main/README.md)
+- [Changelog](https://github.com/fink62/lexicon-av-ha/blob/main/CHANGELOG.md)
+- [Testing Guide](https://github.com/fink62/lexicon-av-ha/blob/main/TESTING_v*.md)
 
 ## Support
 
-Report issues: [GitHub Issues](https://github.com/YOUR_USERNAME/lexicon-av-ha/issues)
+Report issues: [GitHub Issues](https://github.com/fink62/lexicon-av-ha/issues)

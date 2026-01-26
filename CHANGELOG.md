@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.0] - 2026-01-26 - State-Aware Fast-Fail Architecture
+
+### Background — Empirical Investigation
+Advanced TCP connection testing (8 tests in `test_connection_advanced.py`) definitively
+confirmed that the Lexicon receiver supports **exactly ONE TCP connection** — opening a
+second connection immediately evicts the first (FIFO, newest wins). This is a hardware
+constraint, not a bug. The integration's connect-per-operation model is correct, but
+the previous implementation held the connection for 12–27 seconds when the receiver was
+OFF (timeout stacking), dropping app availability to ~60%.
+
+### Changed — Protocol Layer (`lexicon_protocol.py`)
+
+- **Removed reconnect throttle** — `_min_reconnect_interval`, `_reconnect_attempts`,
+  and all throttle logic deleted. Unnecessary in connect-per-operation model where the
+  caller controls timing.
+- **Removed `_send_query_with_retry()`** — Retry-with-reconnect doesn't fit the model
+  where the caller manages the connection lifecycle. All 6 callers switched to
+  `_send_query()` directly.
+- **Removed `_ensure_connection()`** — Auto-reconnect inside query methods conflicts
+  with caller-managed connections.
+- **Removed `heartbeat()` method** — Was referencing an unimported constant; unused.
+- **Simplified `_send_command()`** — Removed retry-with-reconnect logic. Now drains
+  unsolicited echo frames after every successful RC5 command.
+- **Simplified `connect()`** — Removed reconnect attempt counting and throttle checks.
+  Clean connect-or-fail semantics.
+
+### Added — Protocol Layer
+
+- **`_drain_unsolicited()` method** — After RC5 commands, the receiver pushes echo
+  frames (Cc=0x08). This method reads and discards them with a 0.2s timeout to prevent
+  stream corruption on subsequent queries. Called automatically after every successful
+  `_send_command()`.
+- **Configurable timeout on `_send_query()` and `_read_frame()`** — Both accept an
+  optional `timeout` parameter, enabling fast-fail: `get_power_state(timeout=1.0)`
+  aborts in 1 second instead of the default 3 seconds.
+- **`get_decode_2ch()` and `get_decode_mch()`** — Replaced `get_decode_mode()` which
+  made 2 sequential queries internally. Each new method makes exactly 1 query.
+- **`get_power_state(timeout=)` parameter** — Enables fast-fail on the first poll query.
+
+### Changed — Media Player Layer (`media_player.py`)
+
+- **Fast-fail polling** — Power query runs first with 1s timeout. If no response
+  (receiver OFF/unreachable), the entire poll cycle aborts immediately (~1.05s hold
+  instead of 12–27s). If standby, no further queries needed (~0.19s hold).
+- **State-aware poll scheduling** — Replaced fixed 30s `async_track_time_interval`
+  with dynamic `async_call_later`:
+  - ON: 30s interval, full 9-query set (~1.35s hold = 95.5% availability)
+  - OFF: 60s interval, power-only query (~1.05s hold = 98.2% availability)
+- **Simplified `_execute_with_connection()`** — Removed 100ms inter-operation spacing
+  (unnecessary overhead in connect-per-operation).
+- **Separate decode mode queries** — Uses `get_decode_2ch()` / `get_decode_mch()`
+  independently; stores whichever returns data.
+
+### Removed
+
+- `_send_query_with_retry()` method
+- `_ensure_connection()` method
+- `heartbeat()` method
+- `reconnect_attempts` property
+- `_trigger_poll_after_boot()` callback (replaced by `_schedule_next_poll()`)
+- `async_track_time_interval` import (replaced by `async_call_later`)
+- `datetime`/`timedelta` imports from protocol layer
+- All emoji from log messages
+- Stale v1.7.0 comments
+
+### Performance — Connection Hold Time
+
+| State | v1.8.0           | v2.0.0           | App Availability |
+|-------|------------------|------------------|------------------|
+| ON    | ~1.35s / 30s     | ~1.35s / 30s     | 95.5%            |
+| OFF   | **12-27s / 30s** | **~1.05s / 60s** | **98.2%**        |
+
+The OFF state was the critical fix — timeout stacking is eliminated by fast-fail.
+
+### Testing
+
+- `test_connection_advanced.py`: 8 empirical tests confirming single-connection constraint
+- Test results documented in `connection_advanced_results.txt` (app open) and
+  `connection_advanced_results - App OFF.txt` (app closed) — identical results
+- Architecture and investigation documented in `REQUIREMENTS_AND_ARCHITECTURE.md`
+
+---
+
 ## [1.8.0] - 2026-01-25 - THE REAL FIX ✅
 
 ### 🎯 Critical Fix - Reconnect Throttling
@@ -243,44 +326,60 @@ Earlier versions not documented in this changelog.
 
 ## Version History Summary
 
-| Version | Date | Status | Key Change |
-|---------|------|--------|------------|
-| 1.8.0 | 2026-01-25 | ✅ **STABLE** | Fixed 5s throttling → 100ms |
-| 1.7.5 | 2026-01-25 | ❌ Failed | TCP 200ms (wrong approach) |
-| 1.7.4 | 2026-01-25 | ❌ Failed | TCP 100ms (wrong approach) |
-| 1.7.3 | 2026-01-25 | ⚠️ Better | Single lock, still has throttling |
-| 1.7.2 | 2026-01-25 | ❌ Broken | Duplicate locks |
-| 1.7.1 | 2026-01-24 | ⚠️ Incomplete | Polling lock added |
-| 1.7.0 | 2026-01-24 | ⚠️ Broken | Lock architecture, no polling lock |
-| 1.6.2 | 2026-01-24 | ✅ Stable | Scheduled poll |
-| 1.6.0 | 2026-01-23 | ✅ Stable | Retry logic |
+| Version | Date       | Status         | Key Change                            |
+|---------|------------|----------------|---------------------------------------|
+| 2.0.0   | 2026-01-26 | ✅ **CURRENT** | State-aware fast-fail architecture    |
+| 1.8.0   | 2026-01-25 | ✅ Stable      | Fixed 5s throttling → 100ms           |
+| 1.7.5   | 2026-01-25 | ❌ Failed      | TCP 200ms (wrong approach)            |
+| 1.7.4   | 2026-01-25 | ❌ Failed      | TCP 100ms (wrong approach)            |
+| 1.7.3   | 2026-01-25 | ⚠️ Better      | Single lock, still has throttling     |
+| 1.7.2   | 2026-01-25 | ❌ Broken      | Duplicate locks                       |
+| 1.7.1   | 2026-01-24 | ⚠️ Incomplete  | Polling lock added                    |
+| 1.7.0   | 2026-01-24 | ⚠️ Broken      | Lock architecture, no polling lock    |
+| 1.6.2   | 2026-01-24 | ✅ Stable      | Scheduled poll                        |
+| 1.6.0   | 2026-01-23 | ✅ Stable      | Retry logic                           |
 
 ---
 
 ## Migration Guide
 
-### From v1.6.2 to v1.8.0
+### From v1.8.x to v2.0.0
+
 **Recommended:** Direct upgrade
 
+**What changed:**
+
+- Protocol layer simplified: no more retry/reconnect/throttle logic
+- Polling: fast-fail on power query, state-aware intervals (30s ON / 60s OFF)
+- `get_decode_mode()` replaced by `get_decode_2ch()` / `get_decode_mch()`
+- `heartbeat()` removed (was broken)
+- Unsolicited frame drain added after RC5 commands
+
+**Compatibility:** No breaking changes to entity behavior or HA configuration.
+The media player entity exposes the same attributes and services.
+
+### From v1.6.2 to v1.8.0
+
+**Recommended:** Upgrade directly to v2.0.0 instead.
+
 **Changes:**
+
 - Lock-based architecture (no retry delays)
 - Optimized throttling (100ms vs 5s)
 - Optimized TCP cleanup (50ms)
 
-**Compatibility:** 100% - no breaking changes
-
 ### From v1.7.x to v1.8.0
-**Recommended:** Upgrade immediately
+
+**Recommended:** Upgrade directly to v2.0.0 instead.
 
 **All v1.7.x versions had bugs:**
+
 - v1.7.0: No polling lock
 - v1.7.1: Duplicate locks
 - v1.7.2: Duplicate locks
 - v1.7.3: 5s throttling
 - v1.7.4: 5s throttling
 - v1.7.5: 5s throttling
-
-**v1.8.0 fixes all of these issues.**
 
 ---
 
@@ -311,13 +410,13 @@ A dedicated TCP timing test script was created to measure actual hardware behavi
 
 ## Known Issues
 
-### All Versions Before v1.8.0
-- Aggressive reconnect throttling (5 seconds)
-- Causes mysterious connection failures
-- Affects rapid command sequences
-- Blocks source switching after power ON
+### All Versions Before v2.0.0
 
-**Fix:** Upgrade to v1.8.0
+- v1.8.x: Timeout stacking when receiver OFF (12-27s connection hold, ~60% availability)
+- v1.7.x: Various lock and throttle bugs (see version history)
+- v1.6.x: Retry-based approach (slow but stable)
+
+**Fix:** Upgrade to v2.0.0
 
 ---
 
@@ -344,6 +443,6 @@ A dedicated TCP timing test script was created to measure actual hardware behavi
 
 ---
 
-**Current Recommendation:** Use v1.8.0 ✅
+**Current Recommendation:** Use v2.0.0
 
-Last Updated: January 25, 2026
+Last Updated: January 26, 2026
