@@ -52,11 +52,11 @@ class LexiconProtocol:
         self._writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
         
-        # Reconnect handling with exponential backoff
+        # Reconnect handling - minimal throttling (empirically tested: 50ms works)
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 5
         self._last_reconnect_attempt: Optional[datetime] = None
-        self._min_reconnect_interval = timedelta(seconds=5)
+        self._min_reconnect_interval = timedelta(milliseconds=100)  # 100ms (tested on RV-9)
 
     async def connect(self) -> bool:
         """Connect to the Lexicon receiver with connection state management."""
@@ -108,7 +108,7 @@ class LexiconProtocol:
             try:
                 self._writer.close()
                 await self._writer.wait_closed()
-                # Small delay to ensure TCP connection fully closes before next connect
+                # TCP cleanup delay - empirically tested on RV-9: 50ms is sufficient
                 await asyncio.sleep(0.05)  # 50ms
             except Exception as err:
                 _LOGGER.debug("Error closing connection: %s", err)
@@ -259,7 +259,10 @@ class LexiconProtocol:
             response = await self._read_frame()
             if not response:
                 _LOGGER.warning("No query response received")
-                self._connected = False
+                # NOTE: Do NOT set _connected = False here!
+                # Connection is still valid, receiver just didn't respond
+                # (e.g. OFF, booting, or busy). Setting False here causes
+                # unnecessary reconnects for every query in a poll cycle.
                 return None
 
             # Parse response: <Start> <Zone> <Cmd> <Answer> <DataLen> <Data...> <End>
