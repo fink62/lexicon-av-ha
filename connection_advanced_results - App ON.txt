@@ -1,0 +1,192 @@
+[11:01:50.355] 
+[11:01:50.355] ======================================================================
+[11:01:50.355] LEXICON RECEIVER — ADVANCED CONNECTION & PROTOCOL TESTS
+[11:01:50.355] ======================================================================
+[11:01:50.355] Target: 192.168.20.178:50000
+[11:01:50.355] Started: 2026-01-26 11:01:50
+[11:01:50.355] NOTE: Receiver should be ON for meaningful results.
+[11:01:50.355] 
+[11:01:50.355] --- Pre-flight connectivity check ---
+[11:01:50.360]   Pre-flight: connected
+[11:01:50.423]   Pre-flight: closed (+ 50ms delay)
+[11:01:50.936] 
+[11:01:50.936] ======================================================================
+[11:01:50.936] TEST 1: Query Response Timing (receiver must be ON)
+[11:01:50.936] ======================================================================
+[11:01:50.942]   Conn: connected
+[11:01:50.942] 
+[11:01:50.942]   Query            Response       Time  Data
+[11:01:50.942]   -------------- ---------- ----------  --------------------
+[11:01:51.088]   Power                  OK    145.9ms  01
+[11:01:51.288]   Volume                 OK    144.6ms  31
+[11:01:51.628]   Mute                   OK    276.5ms  01
+[11:01:51.829]   Source                 OK    141.3ms  09
+[11:01:52.009]   AudioFormat            OK    129.2ms  1521
+[11:01:52.210]   SampleRate             OK    138.2ms  02
+[11:01:52.408]   Decode2ch              OK    144.3ms  04
+[11:01:52.608]   DecodeMCH              OK    136.7ms  06
+[11:01:52.808]   DirectMode             OK    144.4ms  00
+[11:01:52.936]   Conn: closed (+ 50ms delay)
+[11:01:53.945] 
+[11:01:53.945] ======================================================================
+[11:01:53.945] TEST 2: Connection Eviction (does command on conn2 kill conn1?)
+[11:01:53.945] ======================================================================
+[11:01:53.945] 
+[11:01:53.945] --- Step 1: Open conn1 (the 'app') ---
+[11:01:53.951]   Conn1-app: connected
+[11:01:54.104]   Conn1-app alive: True
+[11:01:54.104] 
+[11:01:54.104] --- Step 2: Open conn2 (the 'integration') — no commands yet ---
+[11:01:54.110]   Conn2-integ: connected
+[11:01:54.312]   Conn1-app drain: EOF detected (remote closed)
+[11:01:54.312]   Conn1-app still alive after conn2 opened: False
+[11:01:54.312]   FINDING: Receiver closed conn1 just because conn2 was opened!
+[11:01:54.376]   Conn2-integ: closed (+ 50ms delay)
+[11:01:55.384] 
+[11:01:55.384] ======================================================================
+[11:01:55.384] TEST 3: Multi-Query Burst (simulates integration poll cycle)
+[11:01:55.384] ======================================================================
+[11:01:55.384] 
+[11:01:55.384] --- Open conn1 (app) — will monitor for closure ---
+[11:01:55.390]   Conn1-app: connected
+[11:01:55.390] 
+[11:01:55.390] --- Open conn2 (integration) — sending query burst ---
+[11:01:56.397]   Conn2-integ: connected
+[11:01:56.548]   Conn2 query Power: OK (150.5ms)
+[11:01:56.548]   Conn1-app drain: EOF detected (remote closed)
+[11:01:56.548]   >>> Conn1-app CLOSED by receiver after Power query (151ms into burst)
+[11:01:56.688]   Conn2 query Volume: OK (139.6ms)
+[11:01:56.829]   Conn2 query Mute: OK (140.4ms)
+[11:01:56.968]   Conn2 query Source: OK (139.3ms)
+[11:01:57.109]   Conn2 query AudioFormat: OK (140.8ms)
+[11:01:57.248]   Conn2 query Decode2ch: OK (139.0ms)
+[11:01:57.390]   Conn2 query DecodeMCH: OK (141.5ms)
+[11:01:57.528]   Conn2 query SampleRate: OK (138.0ms)
+[11:01:57.668]   Conn2 query DirectMode: OK (140.0ms)
+[11:01:57.668] 
+  Total burst time: 1271ms
+[11:01:57.668]   Conn1-app survived burst: False
+[11:01:57.668]   FINDING: App connection killed during polling burst!
+[11:01:57.668] 
+[11:01:57.668] --- Conn2 disconnects (integration poll done) ---
+[11:01:57.719]   Conn2-integ: closed (+ 50ms delay)
+[11:01:57.832] 
+[11:01:57.832] --- Attempting conn1 reconnect (app retry) ---
+[11:01:57.839]   Conn1-app-retry: connected
+[11:01:57.839]   App can reconnect after integration disconnects
+[11:01:57.896]   Conn1-app-retry: closed (+ 50ms delay)
+[11:01:58.904] 
+[11:01:58.904] ======================================================================
+[11:01:58.904] TEST 4: Command Interleaving (alternating between 2 connections)
+[11:01:58.904] ======================================================================
+[11:01:58.910]   ConnA: connected
+[11:01:59.919]   ConnB: connected
+[11:01:59.925]   ConnA -> Power: FAILED (5.8ms)
+[11:01:59.925]   >>> ConnA connection was CLOSED by receiver!
+[11:01:59.925]   ConnA: closed (+ 0ms delay)
+[11:01:59.977]   ConnB: closed (+ 50ms delay)
+[11:02:00.986] 
+[11:02:00.986] ======================================================================
+[11:02:00.986] TEST 5: Passive Monitor (app open, integration does full cycle)
+[11:02:00.986] ======================================================================
+[11:02:00.986] 
+[11:02:00.986] --- Step 1: App opens connection and stays idle ---
+[11:02:00.992]   App: connected
+[11:02:02.156]   App alive after 1s idle: True
+[11:02:02.156] 
+[11:02:02.156] --- Step 2: Integration connects, polls, disconnects ---
+[11:02:02.166]   Integration: connected
+[11:02:02.309]   Integration query Power: OK (142.9ms)
+[11:02:02.509]   Integration query Volume: OK (145.5ms)
+[11:02:02.709]   Integration query Mute: OK (136.8ms)
+[11:02:02.908]   Integration query Source: OK (144.8ms)
+[11:02:03.036]   Integration: closed (+ 50ms delay)
+[11:02:03.036] 
+[11:02:03.036] --- Step 3: Check app connection after integration cycle ---
+[11:02:03.244]   App drain: EOF detected (remote closed)
+[11:02:03.244]   App alive after integration cycle: False
+[11:02:03.244]   FINDING: App connection killed by integration poll cycle!
+[11:02:03.308]   App: closed (+ 50ms delay)
+[11:02:04.315] 
+[11:02:04.316] ======================================================================
+[11:02:04.316] TEST 6: Repeated Poll Cycles (3 cycles, 5.0s apart)
+[11:02:04.316] ======================================================================
+[11:02:04.316] 
+[11:02:04.316] --- App connects ---
+[11:02:04.322]   App: connected
+[11:02:04.322] 
+[11:02:04.322] --- Poll cycle 1/3 ---
+[11:02:04.482]   Integration-C1: connected
+[11:02:04.629]   C1 query Power: OK (146.6ms)
+[11:02:04.830]   C1 query Volume: OK (146.8ms)
+[11:02:05.031]   C1 query Mute: OK (138.8ms)
+[11:02:05.230]   C1 query Source: OK (145.8ms)
+[11:02:05.356]   Integration-C1: closed (+ 50ms delay)
+[11:02:05.564]   App drain: EOF detected (remote closed)
+[11:02:05.564]   >>> App connection KILLED during cycle 1!
+[11:02:05.564]   App died at cycle 1 — stopping repeated test
+[11:02:05.564] 
+[11:02:05.565] --- Summary ---
+[11:02:05.565]   App connection lost during testing
+[11:02:05.628]   App: closed (+ 50ms delay)
+[11:02:06.636] 
+[11:02:06.636] ======================================================================
+[11:02:06.636] TEST 7: Simultaneous Query (both send at exact same time)
+[11:02:06.636] ======================================================================
+[11:02:06.643]   ConnA: connected
+[11:02:07.650]   ConnB: connected
+[11:02:07.650] 
+[11:02:07.650] --- Sending Volume query on both connections simultaneously ---
+[11:02:07.656]   ConnA -> Volume: FAILED (6.1ms)
+[11:02:07.657]   >>> ConnA connection CLOSED by receiver!
+[11:02:07.788]   ConnB -> Volume: OK (137.9ms) data=31
+[11:02:07.789]   ConnA result: False
+[11:02:07.789]   ConnB result: True
+[11:02:07.789]   ConnA: closed (+ 0ms delay)
+[11:02:07.851]   ConnB: closed (+ 50ms delay)
+[11:02:08.860] 
+[11:02:08.860] ======================================================================
+[11:02:08.860] TEST 8: Unsolicited Status Messages (does RC5 on conn2 push status to conn1?)
+[11:02:08.860] ======================================================================
+[11:02:08.861] 
+[11:02:08.861] --- Step 1: Open observer connection (the 'app') ---
+[11:02:08.867]   Observer: connected
+[11:02:09.532] 
+[11:02:09.532] --- Step 2: Open commander connection (the 'integration') ---
+[11:02:09.539]   Commander: connected
+[11:02:09.539] 
+[11:02:09.539] --- Step 3: Read current volume on commander ---
+[11:02:09.689]   Current volume: 0x31 (149.8ms)
+[11:02:09.996]   Observer drain: EOF detected (remote closed)
+[11:02:09.996] 
+[11:02:09.996] --- Step 4: Commander sends RC5 Volume Up ---
+[11:02:09.997]   Sent RC5 Volume Up: 2101080210100d
+[11:02:10.129]   Commander got RC5 response: 21010d0001320d (132.1ms)
+[11:02:10.129] 
+[11:02:10.129] --- Step 5: Check observer for unsolicited status frames ---
+[11:02:11.132]   Observer drain: EOF detected (remote closed)
+[11:02:11.133]   Observer alive after RC5 command: False
+[11:02:11.133]   FINDING: Observer connection KILLED by RC5 command on commander!
+[11:02:11.133] 
+[11:02:11.133] --- Step 6: Check commander for extra unsolicited frames ---
+[11:02:11.133]   Commander drain: unsolicited 0x08 frame: 1010
+[11:02:11.293]   Commander drain: 1 unsolicited frame(s) consumed
+[11:02:11.293] 
+[11:02:11.293] --- Step 7: Restore volume (RC5 Volume Down) ---
+[11:02:11.294]   Sent RC5 Volume Down: 2101080210110d
+[11:02:11.429]   Commander got RC5 response: 21010d0001310d
+[11:02:12.444]   Observer drain: EOF detected (remote closed)
+[11:02:12.444] 
+[11:02:12.445] --- Step 8: Final connectivity check ---
+[11:02:12.445]   Observer drain: EOF detected (remote closed)
+[11:02:12.445]   Observer alive: False
+[11:02:12.445]   Commander drain: unsolicited 0x08 frame: 1011
+[11:02:12.604]   Commander drain: 1 unsolicited frame(s) consumed
+[11:02:12.604]   Commander alive: True
+[11:02:12.605]   Observer: closed (+ 0ms delay)
+[11:02:12.668]   Commander: closed (+ 50ms delay)
+[11:02:12.668] 
+[11:02:12.668] ======================================================================
+[11:02:12.668] ALL TESTS COMPLETE
+[11:02:12.668] ======================================================================
+[11:02:12.668] Ended: 2026-01-26 11:02:12
