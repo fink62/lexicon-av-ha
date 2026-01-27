@@ -39,9 +39,11 @@
   "options": {
     "step": {
       "init": {
-        "title": "Update Input Mapping",
-        "description": "Update your custom source names for physical Lexicon inputs.",
+        "title": "Lexicon AV Receiver Settings",
+        "description": "Update connection settings and custom source names for physical Lexicon inputs.",
         "data": {
+          "host": "IP Address",
+          "port": "Port",
           "BD": "BluRay/DVD Input Name",
           "CD": "CD Player Input Name",
           "STB": "Set Top Box Input Name",
@@ -56,6 +58,9 @@
           "USB": "USB Input Name"
         }
       }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the receiver. Please check the IP address and ensure RS232 Control is enabled."
     }
   }
 }

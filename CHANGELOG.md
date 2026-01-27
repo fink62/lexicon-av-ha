@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.3] - 2026-01-27 - Editable Connection Settings
+
+### Added
+
+- **Host/port fields in options flow** — The configuration wheel now allows updating the
+  receiver IP address and port, in addition to input mappings. If host or port is changed,
+  the new connection is validated before saving. The config entry's unique ID is updated
+  to match the new `{host}:{port}`.
+
+### Changed
+
+- `config_flow.py`: Options form now includes `CONF_HOST` and `CONF_PORT` fields pre-filled
+  with current values; connection is validated only when host/port changes
+- `translations/en.json`: Added host/port labels and `cannot_connect` error to options section;
+  updated options step title and description
+- `manifest.json`: Version bump to 2.0.3
+
+---
+
 ## [2.0.2] - 2026-01-27 - Options Flow Fix
 
 ### Fixed
@@ -364,7 +383,8 @@ Earlier versions not documented in this changelog.
 
 | Version | Date       | Status         | Key Change                            |
 |---------|------------|----------------|---------------------------------------|
-| 2.0.2   | 2026-01-27 | ✅ **CURRENT** | Options flow 500 error fix            |
+| 2.0.3   | 2026-01-27 | ✅ **CURRENT** | Editable connection settings          |
+| 2.0.2   | 2026-01-27 | ✅ Stable      | Options flow 500 error fix            |
 | 2.0.1   | 2026-01-26 | ✅ Stable      | @callback threading fix               |
 | 2.0.0   | 2026-01-26 | ✅ Stable      | State-aware fast-fail architecture    |
 | 1.8.0   | 2026-01-25 | ✅ Stable      | Fixed 5s throttling → 100ms           |
@@ -481,6 +501,6 @@ A dedicated TCP timing test script was created to measure actual hardware behavi
 
 ---
 
-**Current Recommendation:** Use v2.0.2
+**Current Recommendation:** Use v2.0.3
 
 Last Updated: January 27, 2026

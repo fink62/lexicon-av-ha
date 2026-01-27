@@ -112,26 +112,51 @@ class LexiconOptionsFlowHandler(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage the options."""
-        if user_input is not None:
-            # Update the config entry data with new mappings
-            new_data = {**self.config_entry.data}
-            new_data[CONF_INPUT_MAPPINGS] = user_input
-            
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data=new_data
-            )
-            
-            # Reload the integration to apply changes
-            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
-            
-            return self.async_create_entry(title="", data={})
+        errors = {}
 
-        # Get current mappings from data (not options)
+        if user_input is not None:
+            # Separate connection settings from input mappings
+            new_host = user_input.pop(CONF_HOST)
+            new_port = user_input.pop(CONF_PORT)
+
+            old_host = self.config_entry.data.get(CONF_HOST)
+            old_port = self.config_entry.data.get(CONF_PORT, DEFAULT_PORT)
+
+            # Validate connection if host or port changed
+            if new_host != old_host or new_port != old_port:
+                if not await validate_connection(self.hass, new_host, new_port):
+                    errors["base"] = "cannot_connect"
+
+            if not errors:
+                new_data = {
+                    CONF_HOST: new_host,
+                    CONF_PORT: new_port,
+                    CONF_INPUT_MAPPINGS: user_input,
+                }
+
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    data=new_data,
+                    unique_id=f"{new_host}:{new_port}",
+                )
+
+                # Reload the integration to apply changes
+                await self.hass.config_entries.async_reload(
+                    self.config_entry.entry_id
+                )
+
+                return self.async_create_entry(title="", data={})
+
+        # Get current values
+        current_host = self.config_entry.data.get(CONF_HOST, "")
+        current_port = self.config_entry.data.get(CONF_PORT, DEFAULT_PORT)
         current_mappings = self.config_entry.data.get(CONF_INPUT_MAPPINGS, {})
 
         # Build schema with current values as defaults
-        schema_dict = {}
+        schema_dict = {
+            vol.Required(CONF_HOST, default=current_host): str,
+            vol.Optional(CONF_PORT, default=current_port): cv.port,
+        }
         for input_name in LEXICON_INPUTS:
             default = current_mappings.get(input_name, "")
             schema_dict[vol.Optional(input_name, default=default)] = str
@@ -139,4 +164,5 @@ class LexiconOptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(schema_dict),
+            errors=errors,
         )
