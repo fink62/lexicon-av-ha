@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.2] - 2026-01-27 - Options Flow Fix
+
+### Fixed
+
+- **Options flow 500 Internal Server Error** — Clicking the configuration wheel on the
+  integration page caused a "Config flow could not be loaded: 500 Internal Server Error".
+  The `LexiconOptionsFlowHandler` overrode `__init__` without calling `super().__init__()`,
+  preventing the base `OptionsFlow` class from initializing internal state (`self.hass`,
+  flow management). Removed the custom `__init__` entirely — modern Home Assistant
+  automatically provides `self.config_entry` and `self.hass` on `OptionsFlow` instances.
+
+### Changed
+
+- `config_flow.py`: Removed `__init__` override from `LexiconOptionsFlowHandler`
+- `config_flow.py`: `async_get_options_flow` no longer passes `config_entry` to constructor
+- `manifest.json`: Version bump to 2.0.2
+
+---
+
 ## [2.0.1] - 2026-01-26 - Threading Fix
 
 ### Fixed
@@ -345,7 +364,8 @@ Earlier versions not documented in this changelog.
 
 | Version | Date       | Status         | Key Change                            |
 |---------|------------|----------------|---------------------------------------|
-| 2.0.1   | 2026-01-26 | ✅ **CURRENT** | @callback threading fix               |
+| 2.0.2   | 2026-01-27 | ✅ **CURRENT** | Options flow 500 error fix            |
+| 2.0.1   | 2026-01-26 | ✅ Stable      | @callback threading fix               |
 | 2.0.0   | 2026-01-26 | ✅ Stable      | State-aware fast-fail architecture    |
 | 1.8.0   | 2026-01-25 | ✅ Stable      | Fixed 5s throttling → 100ms           |
 | 1.7.5   | 2026-01-25 | ❌ Failed      | TCP 200ms (wrong approach)            |
@@ -461,6 +481,6 @@ A dedicated TCP timing test script was created to measure actual hardware behavi
 
 ---
 
-**Current Recommendation:** Use v2.0.1
+**Current Recommendation:** Use v2.0.2
 
-Last Updated: January 26, 2026
+Last Updated: January 27, 2026
