@@ -89,7 +89,7 @@ Map physical Lexicon inputs to your actual devices:
 | Bluesound (Digital) | CD | `BLUESOUNDd → CD` |
 | Bluesound (Analog) | PVR | `BLUESOUNDa → PVR` |
 | Turntable | STB | `PHONO → STB` |
-| TV (ARC) | DISPLAY | `TV_ARC → DISPLAY` |
+| TV (ARC) | DISPLAY | `TV ARC → DISPLAY` |
 
 **Important:** TV Audio Return Channel uses the `DISPLAY` input, not `AV`.
 
